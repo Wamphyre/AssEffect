@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="320" viewBox="0 0 1200 320" role="img" aria-labelledby="title desc">
+  <title id="title">Ass Effect</title>
+  <desc id="desc">Ass Effect underground lo-fi machine logo with a distressed cassette mark.</desc>
+  <rect width="1200" height="320" rx="28" fill="#191815"/>
+  <circle cx="162" cy="160" r="112" fill="#da4a2a"/>
+  <rect x="91" y="101" width="142" height="118" rx="13" fill="#191815"/>
+  <circle cx="128" cy="155" r="20" fill="none" stroke="#dcd3bb" stroke-width="10"/>
+  <circle cx="196" cy="155" r="20" fill="none" stroke="#dcd3bb" stroke-width="10"/>
+  <path d="M112 196h100l-13-22h-74z" fill="none" stroke="#dcd3bb" stroke-width="9" stroke-linejoin="round"/>
+  <path d="M245 227c37 8 44 38 17 53 25 1 42-7 50-25-10 3-17 0-22-8-8-15-19-25-35-31z" fill="#da4a2a"/>
+  <text x="310" y="176" fill="#dcd3bb" font-family="DejaVu Sans, sans-serif" font-size="113" font-weight="900" letter-spacing="-5">ASS EFFECT</text>
+  <text x="320" y="235" fill="#e89c30" font-family="DejaVu Sans, sans-serif" font-size="31" font-weight="700" letter-spacing="8">UNDERGROUND LO-FI MACHINE</text>
+  <path d="M322 259h795" stroke="#504a3e" stroke-width="5" stroke-dasharray="42 15 8 15"/>
+</svg>
+
