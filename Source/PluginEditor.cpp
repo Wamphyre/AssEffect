@@ -159,7 +159,7 @@ AssEffectAudioProcessorEditor::AssEffectAudioProcessorEditor(AssEffectAudioProce
         addAndMakeVisible(*label);
     }
 
-    presets.setTextWhenNothingSelected("Choose a ritual...");
+    presets.setTextWhenNothingSelected("CUSTOM / MODIFIED");
     int presetID = 1;
     juce::String currentCategory;
     for (const auto& preset : AssEffectAudioProcessor::getFactoryPresets())
@@ -176,6 +176,8 @@ AssEffectAudioProcessorEditor::AssEffectAudioProcessorEditor(AssEffectAudioProce
         if (presets.getSelectedId() > 0)
             processor.loadFactoryPreset(presets.getSelectedId() - 1);
     };
+    presets.setSelectedId(processor.getCurrentFactoryPresetIndex() + 1,
+                          juce::dontSendNotification);
     presets.setTooltip("Factory starting points for tracks, instruments and masters");
     addAndMakeVisible(presets);
 
@@ -361,6 +363,10 @@ void AssEffectAudioProcessorEditor::resized()
 
 void AssEffectAudioProcessorEditor::timerCallback()
 {
+    const auto currentPresetID = processor.getCurrentFactoryPresetIndex() + 1;
+    if (presets.getSelectedId() != currentPresetID)
+        presets.setSelectedId(currentPresetID, juce::dontSendNotification);
+
     const auto input = processor.consumeInputPeak();
     const auto output = processor.consumeOutputPeak();
     displayedInput = input >= displayedInput ? input : displayedInput * 0.84f;

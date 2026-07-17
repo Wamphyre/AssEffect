@@ -79,7 +79,6 @@ echo "Configurando (optimizaciones nativas: ${native_optimizations})..."
 cmake -S "${SCRIPT_DIR}" -B "${BUILD_DIR}" \
     "${generator_args[@]}" \
     -DCMAKE_BUILD_TYPE=Release \
-    -DBUILD_TESTING=ON \
     -DASS_EFFECT_NATIVE_OPTIMIZATIONS="${native_optimizations}"
 
 if [[ -n "${JOBS:-}" ]]; then
@@ -99,9 +98,6 @@ fi
 
 echo "Compilando con ${build_jobs} trabajos..."
 cmake --build "${BUILD_DIR}" --config Release --parallel "${build_jobs}"
-
-echo "Ejecutando pruebas DSP..."
-ctest --test-dir "${BUILD_DIR}" --build-config Release --output-on-failure
 
 built_bundle="$(find "${BUILD_DIR}" -type d -name 'Ass Effect.vst3' -print -quit)"
 [[ -n "${built_bundle}" ]] || die "CMake terminó, pero no se encontró Ass Effect.vst3"

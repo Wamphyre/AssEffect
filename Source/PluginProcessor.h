@@ -22,13 +22,14 @@ inline constexpr auto output = "output";
 inline constexpr auto bypass = "bypass";
 }
 
-class AssEffectAudioProcessor final : public juce::AudioProcessor
+class AssEffectAudioProcessor final : public juce::AudioProcessor,
+                                      private juce::AudioProcessorValueTreeState::Listener
 {
 public:
     using FactoryPreset = AssEffectFactoryPreset;
 
     AssEffectAudioProcessor();
-    ~AssEffectAudioProcessor() override = default;
+    ~AssEffectAudioProcessor() override;
 
     void prepareToPlay(double sampleRate, int samplesPerBlock) override;
     void releaseResources() override;
@@ -41,7 +42,7 @@ public:
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
 
-    const juce::String getName() const override { return JucePlugin_Name; }
+    const juce::String getName() const override { return "Ass Effect"; }
     bool acceptsMidi() const override { return false; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
@@ -59,6 +60,10 @@ public:
     juce::AudioProcessorValueTreeState& getValueTreeState() noexcept { return parameters; }
     static const std::array<FactoryPreset, 13>& getFactoryPresets();
     void loadFactoryPreset(int index);
+    int getCurrentFactoryPresetIndex() const noexcept
+    {
+        return currentFactoryPreset.load(std::memory_order_relaxed);
+    }
     float consumeInputPeak() noexcept { return inputPeak.exchange(0.0f); }
     float consumeOutputPeak() noexcept { return outputPeak.exchange(0.0f); }
 
@@ -81,11 +86,15 @@ private:
 
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
     static float findMagnitude(const juce::AudioBuffer<float>& buffer);
+    bool matchesFactoryPreset(int index) const noexcept;
+    int findMatchingFactoryPreset() const noexcept;
+    void parameterChanged(const juce::String&, float) override;
     void updatePeak(std::atomic<float>& destination, float value) noexcept;
 
     juce::AudioProcessorValueTreeState parameters;
     ParameterCache parameterCache;
     LoFiEngine engine;
+    std::atomic<int> currentFactoryPreset { -1 };
     std::atomic<float> inputPeak { 0.0f };
     std::atomic<float> outputPeak { 0.0f };
 

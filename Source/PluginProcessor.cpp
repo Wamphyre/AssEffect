@@ -1,6 +1,8 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
+#include <cmath>
+
 namespace
 {
 constexpr std::array<const char*, 12> parameterOrder
@@ -9,6 +11,8 @@ constexpr std::array<const char*, 12> parameterOrder
     ParameterIDs::wow, ParameterIDs::noise, ParameterIDs::grit, ParameterIDs::tone,
     ParameterIDs::width, ParameterIDs::mix, ParameterIDs::output, ParameterIDs::bypass
 };
+
+const juce::Identifier factoryPresetProperty { "factoryPreset" };
 }
 
 AssEffectAudioProcessor::AssEffectAudioProcessor()
@@ -29,6 +33,15 @@ AssEffectAudioProcessor::AssEffectAudioProcessor()
     parameterCache.mix = parameters.getRawParameterValue(ParameterIDs::mix);
     parameterCache.output = parameters.getRawParameterValue(ParameterIDs::output);
     parameterCache.bypass = parameters.getRawParameterValue(ParameterIDs::bypass);
+
+    for (const auto* parameterID : parameterOrder)
+        parameters.addParameterListener(parameterID, this);
+}
+
+AssEffectAudioProcessor::~AssEffectAudioProcessor()
+{
+    for (const auto* parameterID : parameterOrder)
+        parameters.removeParameterListener(parameterID, this);
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout AssEffectAudioProcessor::createParameterLayout()
@@ -143,15 +156,32 @@ void AssEffectAudioProcessor::processBlockBypassed(juce::AudioBuffer<float>& buf
 
 void AssEffectAudioProcessor::getStateInformation(juce::MemoryBlock& destination)
 {
-    if (auto xml = parameters.copyState().createXml())
+    auto state = parameters.copyState();
+    state.setProperty(factoryPresetProperty,
+                      currentFactoryPreset.load(std::memory_order_relaxed), nullptr);
+    if (auto xml = state.createXml())
         copyXmlToBinary(*xml, destination);
 }
 
 void AssEffectAudioProcessor::setStateInformation(const void* data, int sizeInBytes)
 {
     if (auto xml = getXmlFromBinary(data, sizeInBytes))
+    {
         if (xml->hasTagName(parameters.state.getType()))
-            parameters.replaceState(juce::ValueTree::fromXml(*xml));
+        {
+            auto restoredState = juce::ValueTree::fromXml(*xml);
+            const auto savedPreset = static_cast<int>(
+                restoredState.getProperty(factoryPresetProperty, -1));
+
+            currentFactoryPreset.store(-1, std::memory_order_relaxed);
+            parameters.replaceState(restoredState);
+
+            const auto matchingPreset = findMatchingFactoryPreset();
+            currentFactoryPreset.store(matchesFactoryPreset(savedPreset) ? savedPreset
+                                                                          : matchingPreset,
+                                       std::memory_order_relaxed);
+        }
+    }
 }
 
 const std::array<AssEffectAudioProcessor::FactoryPreset, 13>& AssEffectAudioProcessor::getFactoryPresets()
@@ -174,6 +204,42 @@ void AssEffectAudioProcessor::loadFactoryPreset(int index)
             parameter->endChangeGesture();
         }
     }
+
+    currentFactoryPreset.store(index, std::memory_order_relaxed);
+}
+
+bool AssEffectAudioProcessor::matchesFactoryPreset(int index) const noexcept
+{
+    if (!juce::isPositiveAndBelow(index, static_cast<int>(assEffectFactoryPresets.size())))
+        return false;
+
+    constexpr float tolerance = 0.051f;
+    const auto& preset = assEffectFactoryPresets[static_cast<std::size_t>(index)];
+    for (std::size_t parameterIndex = 0; parameterIndex < parameterOrder.size(); ++parameterIndex)
+    {
+        const auto* value = parameters.getRawParameterValue(parameterOrder[parameterIndex]);
+        if (value == nullptr
+            || std::abs(value->load(std::memory_order_relaxed)
+                        - preset.values[parameterIndex]) > tolerance)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+int AssEffectAudioProcessor::findMatchingFactoryPreset() const noexcept
+{
+    for (int index = 0; index < static_cast<int>(assEffectFactoryPresets.size()); ++index)
+        if (matchesFactoryPreset(index))
+            return index;
+
+    return -1;
+}
+
+void AssEffectAudioProcessor::parameterChanged(const juce::String&, float)
+{
+    currentFactoryPreset.store(-1, std::memory_order_relaxed);
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()

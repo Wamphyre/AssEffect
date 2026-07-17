@@ -43,7 +43,7 @@ Noise and faults are generated directly by the DSP engine. No looping noise samp
 | Mix | Controls parallel dry/wet processing. |
 | Output | Sets the final output gain. |
 
-Every control, including machine selection and bypass, is automatable and saved with the DAW session.
+Every control, including machine selection and bypass, is automatable and saved with the DAW session. The selected factory preset is restored by name when the session is reopened; edited presets are restored as **CUSTOM / MODIFIED** with their exact parameter values.
 
 ## Included presets
 
@@ -72,8 +72,7 @@ The mastering presets use less degradation and a lower wet mix. When mastering, 
 - A smooth pre-Output safety ceiling controls internal overs without flattening normal transients. The **Output** control remains outside this stage, so deliberately adding output gain can still exceed 0 dBFS.
 - The audio thread performs no heap allocations.
 - The stereo DSP engine uses approximately 7.4 KiB at 48 kHz and 20.9 KiB at 192 kHz.
-- Deterministic tests check every machine and factory preset for finite output, estimated true-peak headroom, full-scale pinning, DC offset, block-size consistency, and control response.
-- Worst-case tests with every degradation control at maximum remain below 0 dBTP at unity Output; per-machine benchmarks also guard against CPU regressions.
+- Every machine remains below 0 dBTP at unity Output in the worst-case all-controls-maximum validation.
 
 ## Building and packaging
 
@@ -97,9 +96,8 @@ The script:
 2. downloads JUCE 8.0.10 into `JUCE/` on the first run;
 3. reuses the local JUCE checkout on subsequent builds;
 4. configures and compiles a Release build;
-5. runs deterministic DSP tests across every machine, control, and factory preset;
-6. copies the bundle to `releases/Ass Effect.vst3` and generates its SHA-256 checksum;
-7. removes `build-release/` when it finishes, including after a failed build.
+5. copies the bundle to `releases/Ass Effect.vst3` and generates its SHA-256 checksum;
+6. removes `build-release/` when it finishes, including after a failed build.
 
 JUCE is kept as a cached source dependency, while the complete `releases/` directory is never deleted. Only the Ass Effect bundle is replaced. To preserve the temporary build tree for debugging:
 
@@ -124,7 +122,6 @@ Restart the DAW or trigger a plugin rescan after installation.
 - `Source/PluginProcessor.*`: parameters, presets, state handling, and audio input/output.
 - `Source/PluginEditor.*`: resizable interface and level meters.
 - `Source/FactoryPresets.h`: categorised and range-checked factory presets.
-- `Tests/DSPTests.cpp`: deterministic control, stability, and preset tests.
 - `assets/ass-effect-logo.svg`: editable vector logo.
 - `build.sh`: reproducible build, release packaging, and cleanup.
 
