@@ -60,12 +60,20 @@ Presets are grouped by intent in the interface: **Media**, **Instruments**, **Bu
 | Instruments | **Rehearsal Mic** | Worn cassette capture with the feel of a rough room recording. |
 | Instruments | **Frozen Sampler** | Cold sample-rate and bit-depth reduction for digital sources. |
 | Bus / Master | **Tape Glue** | Subtle cassette cohesion with a conservative 20% wet mix. |
-| Bus / Master | **Necro Master** | Controlled 4-track damage for black-metal master buses. |
-| Bus / Master | **Raw Master** | Light cassette movement and saturation for full mixes. |
+| Bus / Master | **Necro Master** | Narrow, dry bedroom 4-track damage inspired by the classic Darkthrone/Necrohell approach. |
+| Bus / Master | **Raw Master** | Parallel cheap-speaker and fuzz haze inspired by classic Burzum production while retaining the dry low end. |
 | Extreme | **Dust Dub** | Heavy vinyl wear, noise, width, and pitch movement. |
 | Extreme | **Destroyed Room** | Aggressive cellar-speaker destruction for parallel processing. |
 
 The mastering presets use less degradation and a lower wet mix. When mastering, match the perceived level with **Output** before comparing processed and bypassed audio. For an extreme insert effect, raise **Mix** to 100%.
+
+## Real-time safety and performance
+
+- A smooth pre-Output safety ceiling controls internal overs without flattening normal transients. The **Output** control remains outside this stage, so deliberately adding output gain can still exceed 0 dBFS.
+- The audio thread performs no heap allocations.
+- The stereo DSP engine uses approximately 7.4 KiB at 48 kHz and 20.9 KiB at 192 kHz.
+- Deterministic tests check every machine and factory preset for finite output, estimated true-peak headroom, full-scale pinning, DC offset, block-size consistency, and control response.
+- Worst-case tests with every degradation control at maximum remain below 0 dBTP at unity Output; per-machine benchmarks also guard against CPU regressions.
 
 ## Building and packaging
 

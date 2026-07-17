@@ -63,11 +63,28 @@ public:
     float consumeOutputPeak() noexcept { return outputPeak.exchange(0.0f); }
 
 private:
+    struct ParameterCache
+    {
+        std::atomic<float>* machine = nullptr;
+        std::atomic<float>* drive = nullptr;
+        std::atomic<float>* age = nullptr;
+        std::atomic<float>* wear = nullptr;
+        std::atomic<float>* wow = nullptr;
+        std::atomic<float>* noise = nullptr;
+        std::atomic<float>* grit = nullptr;
+        std::atomic<float>* tone = nullptr;
+        std::atomic<float>* width = nullptr;
+        std::atomic<float>* mix = nullptr;
+        std::atomic<float>* output = nullptr;
+        std::atomic<float>* bypass = nullptr;
+    };
+
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
     static float findMagnitude(const juce::AudioBuffer<float>& buffer);
     void updatePeak(std::atomic<float>& destination, float value) noexcept;
 
     juce::AudioProcessorValueTreeState parameters;
+    ParameterCache parameterCache;
     LoFiEngine engine;
     std::atomic<float> inputPeak { 0.0f };
     std::atomic<float> outputPeak { 0.0f };

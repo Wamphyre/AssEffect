@@ -23,10 +23,11 @@ inline constexpr std::array<AssEffectFactoryPreset, 13> assEffectFactoryPresets
     { "INSTRUMENTS", "Frozen Sampler", { 4,  6.0f, 32, 28,  6,  4, 62,   2, 112,  78, -1.0f, 0 } },
 
     { "BUS / MASTER", "Tape Glue",    { 0,  2.5f, 14,  7,  3,  2,  3,   5, 102,  20,  0.0f, 0 } },
-    { "BUS / MASTER", "Necro Master", { 2,  4.5f, 36, 20,  8,  5, 12,  -4,  92,  32, -0.5f, 0 } },
-    { "BUS / MASTER", "Raw Master",   { 0,  3.0f, 20, 10,  5,  3,  5,   4, 102,  25,  0.0f, 0 } },
+    // Bedroom 4-track constriction: narrow, dry, mid-forward and visibly worn.
+    { "BUS / MASTER", "Necro Master", { 2,  6.8f, 58, 40,  7,  8, 26, -12,  55,  58, -1.5f, 0 } },
+    // Cheap stereo/fuzz haze in parallel: abrasive mids while the dry path keeps the low end.
+    { "BUS / MASTER", "Raw Master",   { 3,  7.5f, 48, 30,  4,  4, 34,  18,  76,  48, -1.0f, 0 } },
 
     { "EXTREME", "Dust Dub",       { 1,  5.0f, 72, 76, 52, 50, 20, -18, 118, 100, -1.5f, 0 } },
     { "EXTREME", "Destroyed Room", { 3, 13.0f, 68, 72, 19, 28, 66, -28,  38,  82, -3.0f, 0 } }
 }};
-

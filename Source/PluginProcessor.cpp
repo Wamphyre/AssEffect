@@ -17,6 +17,18 @@ AssEffectAudioProcessor::AssEffectAudioProcessor()
           .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
       parameters(*this, nullptr, "ASS_EFFECT_STATE", createParameterLayout())
 {
+    parameterCache.machine = parameters.getRawParameterValue(ParameterIDs::machine);
+    parameterCache.drive = parameters.getRawParameterValue(ParameterIDs::drive);
+    parameterCache.age = parameters.getRawParameterValue(ParameterIDs::age);
+    parameterCache.wear = parameters.getRawParameterValue(ParameterIDs::wear);
+    parameterCache.wow = parameters.getRawParameterValue(ParameterIDs::wow);
+    parameterCache.noise = parameters.getRawParameterValue(ParameterIDs::noise);
+    parameterCache.grit = parameters.getRawParameterValue(ParameterIDs::grit);
+    parameterCache.tone = parameters.getRawParameterValue(ParameterIDs::tone);
+    parameterCache.width = parameters.getRawParameterValue(ParameterIDs::width);
+    parameterCache.mix = parameters.getRawParameterValue(ParameterIDs::mix);
+    parameterCache.output = parameters.getRawParameterValue(ParameterIDs::output);
+    parameterCache.bypass = parameters.getRawParameterValue(ParameterIDs::bypass);
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout AssEffectAudioProcessor::createParameterLayout()
@@ -103,20 +115,20 @@ void AssEffectAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
 
     updatePeak(inputPeak, findMagnitude(buffer));
 
-    if (parameters.getRawParameterValue(ParameterIDs::bypass)->load() < 0.5f)
+    if (parameterCache.bypass->load(std::memory_order_relaxed) < 0.5f)
     {
         LoFiEngine::Parameters p;
-        p.machine = juce::roundToInt(parameters.getRawParameterValue(ParameterIDs::machine)->load());
-        p.driveDb = parameters.getRawParameterValue(ParameterIDs::drive)->load();
-        p.age = parameters.getRawParameterValue(ParameterIDs::age)->load();
-        p.wear = parameters.getRawParameterValue(ParameterIDs::wear)->load();
-        p.wow = parameters.getRawParameterValue(ParameterIDs::wow)->load();
-        p.noise = parameters.getRawParameterValue(ParameterIDs::noise)->load();
-        p.grit = parameters.getRawParameterValue(ParameterIDs::grit)->load();
-        p.tone = parameters.getRawParameterValue(ParameterIDs::tone)->load();
-        p.width = parameters.getRawParameterValue(ParameterIDs::width)->load();
-        p.mix = parameters.getRawParameterValue(ParameterIDs::mix)->load();
-        p.outputDb = parameters.getRawParameterValue(ParameterIDs::output)->load();
+        p.machine = juce::roundToInt(parameterCache.machine->load(std::memory_order_relaxed));
+        p.driveDb = parameterCache.drive->load(std::memory_order_relaxed);
+        p.age = parameterCache.age->load(std::memory_order_relaxed);
+        p.wear = parameterCache.wear->load(std::memory_order_relaxed);
+        p.wow = parameterCache.wow->load(std::memory_order_relaxed);
+        p.noise = parameterCache.noise->load(std::memory_order_relaxed);
+        p.grit = parameterCache.grit->load(std::memory_order_relaxed);
+        p.tone = parameterCache.tone->load(std::memory_order_relaxed);
+        p.width = parameterCache.width->load(std::memory_order_relaxed);
+        p.mix = parameterCache.mix->load(std::memory_order_relaxed);
+        p.outputDb = parameterCache.output->load(std::memory_order_relaxed);
         engine.process(buffer, p);
     }
 
