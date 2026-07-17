@@ -173,11 +173,13 @@ AssEffectAudioProcessorEditor::AssEffectAudioProcessorEditor(AssEffectAudioProce
     }
     presets.onChange = [this]
     {
-        if (presets.getSelectedId() > 0)
-            processor.loadFactoryPreset(presets.getSelectedId() - 1);
+        const auto selectedPresetID = presets.getSelectedId();
+        if (selectedPresetID > 0)
+            processor.loadFactoryPreset(selectedPresetID - 1);
     };
     presets.setSelectedId(processor.getCurrentFactoryPresetIndex() + 1,
                           juce::dontSendNotification);
+    lastPresetRevision = processor.getPresetRevision();
     presets.setTooltip("Factory starting points for tracks, instruments and masters");
     addAndMakeVisible(presets);
 
@@ -363,9 +365,38 @@ void AssEffectAudioProcessorEditor::resized()
 
 void AssEffectAudioProcessorEditor::timerCallback()
 {
-    const auto currentPresetID = processor.getCurrentFactoryPresetIndex() + 1;
-    if (presets.getSelectedId() != currentPresetID)
-        presets.setSelectedId(currentPresetID, juce::dontSendNotification);
+    const auto presetRevision = processor.getPresetRevision();
+    if (presetRevision != lastPresetRevision)
+    {
+        lastPresetRevision = presetRevision;
+        presetSyncCountdown = 2;
+    }
+
+    // ComboBox click notifications are asynchronous in JUCE. Waiting until the
+    // processor state is stable prevents the timer from restoring the previous
+    // preset between the click and its pending onChange callback.
+    if (presetSyncCountdown > 0)
+    {
+        if (presets.isPopupActive())
+        {
+            presetSyncCountdown = 2;
+        }
+        else if (--presetSyncCountdown == 0)
+        {
+            const auto latestRevision = processor.getPresetRevision();
+            if (latestRevision != lastPresetRevision)
+            {
+                lastPresetRevision = latestRevision;
+                presetSyncCountdown = 2;
+            }
+            else
+            {
+                const auto currentPresetID = processor.getCurrentFactoryPresetIndex() + 1;
+                if (presets.getSelectedId() != currentPresetID)
+                    presets.setSelectedId(currentPresetID, juce::dontSendNotification);
+            }
+        }
+    }
 
     const auto input = processor.consumeInputPeak();
     const auto output = processor.consumeOutputPeak();

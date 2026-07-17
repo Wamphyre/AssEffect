@@ -180,6 +180,7 @@ void AssEffectAudioProcessor::setStateInformation(const void* data, int sizeInBy
             currentFactoryPreset.store(matchesFactoryPreset(savedPreset) ? savedPreset
                                                                           : matchingPreset,
                                        std::memory_order_relaxed);
+            presetRevision.fetch_add(1, std::memory_order_relaxed);
         }
     }
 }
@@ -206,6 +207,7 @@ void AssEffectAudioProcessor::loadFactoryPreset(int index)
     }
 
     currentFactoryPreset.store(index, std::memory_order_relaxed);
+    presetRevision.fetch_add(1, std::memory_order_relaxed);
 }
 
 bool AssEffectAudioProcessor::matchesFactoryPreset(int index) const noexcept
@@ -239,7 +241,8 @@ int AssEffectAudioProcessor::findMatchingFactoryPreset() const noexcept
 
 void AssEffectAudioProcessor::parameterChanged(const juce::String&, float)
 {
-    currentFactoryPreset.store(-1, std::memory_order_relaxed);
+    if (currentFactoryPreset.exchange(-1, std::memory_order_relaxed) != -1)
+        presetRevision.fetch_add(1, std::memory_order_relaxed);
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()

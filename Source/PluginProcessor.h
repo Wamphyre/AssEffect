@@ -5,6 +5,7 @@
 #include "LoFiEngine.h"
 
 #include <atomic>
+#include <cstdint>
 
 namespace ParameterIDs
 {
@@ -64,6 +65,10 @@ public:
     {
         return currentFactoryPreset.load(std::memory_order_relaxed);
     }
+    std::uint64_t getPresetRevision() const noexcept
+    {
+        return presetRevision.load(std::memory_order_relaxed);
+    }
     float consumeInputPeak() noexcept { return inputPeak.exchange(0.0f); }
     float consumeOutputPeak() noexcept { return outputPeak.exchange(0.0f); }
 
@@ -95,6 +100,7 @@ private:
     ParameterCache parameterCache;
     LoFiEngine engine;
     std::atomic<int> currentFactoryPreset { -1 };
+    std::atomic<std::uint64_t> presetRevision { 0 };
     std::atomic<float> inputPeak { 0.0f };
     std::atomic<float> outputPeak { 0.0f };
 

@@ -43,7 +43,7 @@ Noise and faults are generated directly by the DSP engine. No looping noise samp
 | Mix | Controls parallel dry/wet processing. |
 | Output | Sets the final output gain. |
 
-Every control, including machine selection and bypass, is automatable and saved with the DAW session. The selected factory preset is restored by name when the session is reopened; edited presets are restored as **CUSTOM / MODIFIED** with their exact parameter values.
+Every control, including machine selection and bypass, is automatable and saved with the DAW session. Factory presets respond immediately to mouse or keyboard selection and are restored by name when the session is reopened; edited presets are restored as **CUSTOM / MODIFIED** with their exact parameter values.
 
 ## Included presets
 

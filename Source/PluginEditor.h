@@ -3,6 +3,7 @@
 #include <JuceHeader.h>
 #include "PluginProcessor.h"
 
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -60,9 +61,10 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> machineAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> bypassAttachment;
     std::vector<std::unique_ptr<AssEffectParameterKnob>> knobs;
+    std::uint64_t lastPresetRevision = 0;
+    int presetSyncCountdown = 0;
     float displayedInput = 0.0f;
     float displayedOutput = 0.0f;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AssEffectAudioProcessorEditor)
 };
-
