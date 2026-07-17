@@ -21,7 +21,7 @@
 ## Machines
 
 - **90s Cassette**: magnetic compression and saturation with memory, head bump, hiss, high-frequency loss, wow/flutter, and dropouts.
-- **Worn Vinyl**: the limited bandwidth of a worn record, rumble, surface noise, dust, clicks, and slow wow.
+- **Worn Vinyl**: the limited bandwidth of a worn record, rumble, broadband surface dust, clicks, and slow wow.
 - **4-Track Demo**: darker, more saturated, and less stable narrow tape designed for guitars and raw demos.
 - **Cellar Speaker**: small-speaker band-pass filtering, asymmetric clipping, and aggressive degradation for vocals, drums, or parallel reamping.
 - **Bitrot Sampler**: sample-and-hold processing and resolution reduction for cold digital degradation.
@@ -34,9 +34,9 @@ Noise and faults are generated directly by the DSP engine. No looping noise samp
 | --- | --- |
 | Drive | Controls the level entering the machine's saturation stage. |
 | Age | Controls bandwidth loss, magnetic sluggishness, and general ageing. |
-| Wear | Controls tape dropouts or the density of vinyl dust and clicks. |
+| Wear | Controls tape dropouts or the density and scratch intensity of vinyl dust and clicks. |
 | Wow / Flutter | Controls slow and fast speed instability. |
-| Noise | Adds tape hiss or vinyl surface noise and rumble. |
+| Noise | Adds tape hiss or controls the level of vinyl surface noise, crackle, and rumble. |
 | Grit | Controls machine-dependent clipping, sample-and-hold, and bit reduction. |
 | Tone | Compensates for or exaggerates the machine's darkness. |
 | Width | Adjusts the stereo image from mono to 150%. |
@@ -62,8 +62,14 @@ Presets are grouped by intent in the interface: **Media**, **Instruments**, **Bu
 | Bus / Master | **Tape Glue** | Subtle cassette cohesion with a conservative 20% wet mix. |
 | Bus / Master | **Necro Master** | Narrow, dry bedroom 4-track damage inspired by the classic Darkthrone/Necrohell approach. |
 | Bus / Master | **Raw Master** | Parallel cheap-speaker and fuzz haze inspired by classic Burzum production while retaining the dry low end. |
-| Extreme | **Dust Dub** | Heavy vinyl wear, noise, width, and pitch movement. |
+| Extreme | **Dust Dub** | Dense vinyl dust, frequent crackles, wide surface noise, and pronounced pitch movement. |
 | Extreme | **Destroyed Room** | Aggressive cellar-speaker destruction for parallel processing. |
+
+### Dust Dub
+
+The revised **Dust Dub** preset uses the **Worn Vinyl** machine at 100% wet and is intentionally obvious even on dense material. It combines a continuous broadband dust bed, about 20 generated crackle events per second and channel, stronger wow/flutter, and an expanded stereo image. Its Output is reduced by 2.5 dB to retain peak headroom.
+
+For a subtler result, lower **Wear** first to reduce event density, then lower **Noise** to move the complete vinyl artefact layer behind the source. Use **Mix** when the original transient and low-frequency content must remain intact.
 
 The mastering presets use less degradation and a lower wet mix. When mastering, match the perceived level with **Output** before comparing processed and bypassed audio. For an extreme insert effect, raise **Mix** to 100%.
 

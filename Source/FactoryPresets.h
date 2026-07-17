@@ -28,6 +28,6 @@ inline constexpr std::array<AssEffectFactoryPreset, 13> assEffectFactoryPresets
     // Cheap stereo/fuzz haze in parallel: abrasive mids while the dry path keeps the low end.
     { "BUS / MASTER", "Raw Master",   { 3,  7.5f, 48, 30,  4,  4, 34,  18,  76,  48, -1.0f, 0 } },
 
-    { "EXTREME", "Dust Dub",       { 1,  5.0f, 72, 76, 52, 50, 20, -18, 118, 100, -1.5f, 0 } },
+    { "EXTREME", "Dust Dub",       { 1,  6.0f, 80, 92, 64, 72, 28, -14, 128, 100, -2.5f, 0 } },
     { "EXTREME", "Destroyed Room", { 3, 13.0f, 68, 72, 19, 28, 66, -28,  38,  82, -3.0f, 0 } }
 }};

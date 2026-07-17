@@ -48,7 +48,7 @@ void LoFiEngine::prepare(const juce::dsp::ProcessSpec& spec)
         cellarHissGains[index] = juce::Decibels::decibelsToGain(-78.0f + amount * 43.0f);
         vinylRumbleGains[index] = juce::Decibels::decibelsToGain(-52.0f + amount * 22.0f);
         vinylCrackleGains[index] = juce::Decibels::decibelsToGain(-22.0f + amount * 12.0f);
-        vinylSurfaceGains[index] = juce::Decibels::decibelsToGain(-61.0f + amount * 29.0f);
+        vinylSurfaceGains[index] = juce::Decibels::decibelsToGain(-58.0f + amount * 32.0f);
     }
     reset();
 }
@@ -240,7 +240,7 @@ float LoFiEngine::processChannel(float input, int channel, const Parameters& p,
         state.rumble += rumbleCoefficient * (white - state.rumble);
         artefact += state.rumble * artifactGains.rumble;
 
-        const auto cracklesPerSecond = 0.12f + wear * wear * 15.0f;
+        const auto cracklesPerSecond = 0.18f + wear * wear * 24.0f;
         if ((nextRandom(state) * 0.5f + 0.5f) < cracklesPerSecond / static_cast<float>(sampleRate))
         {
             state.crackleEnvelope = 0.25f + 0.75f * (nextRandom(state) * 0.5f + 0.5f);
@@ -250,7 +250,9 @@ float LoFiEngine::processChannel(float input, int channel, const Parameters& p,
         state.crackleEnvelope *= crackleDecay;
 
         state.noiseLow += 0.085f * (white - state.noiseLow);
-        artefact += state.noiseLow * artifactGains.surface;
+        const auto dustScratch = (white - state.noiseLow) * (0.25f + 0.75f * wear);
+        const auto surfaceTexture = 0.72f * state.noiseLow + 0.28f * dustScratch;
+        artefact += surfaceTexture * artifactGains.surface;
     }
     else
     {
