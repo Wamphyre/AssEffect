@@ -114,6 +114,8 @@ AssEffectParameterKnob::AssEffectParameterKnob(juce::AudioProcessorValueTreeStat
     slider.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
     slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 76, 20);
     slider.setTextValueSuffix(suffix);
+    if (suffix.containsIgnoreCase("dB"))
+        slider.setColour(juce::Slider::textBoxTextColourId, juce::Colours::black);
     slider.setMouseDragSensitivity(180);
     slider.setScrollWheelEnabled(true);
     slider.setName(caption);
@@ -159,12 +161,20 @@ AssEffectAudioProcessorEditor::AssEffectAudioProcessorEditor(AssEffectAudioProce
 
     presets.setTextWhenNothingSelected("Choose a ritual...");
     int presetID = 1;
+    juce::String currentCategory;
     for (const auto& preset : AssEffectAudioProcessor::getFactoryPresets())
+    {
+        if (currentCategory != preset.category)
+        {
+            currentCategory = preset.category;
+            presets.addSectionHeading(currentCategory);
+        }
         presets.addItem(preset.name, presetID++);
+    }
     presets.onChange = [this]
     {
-        if (presets.getSelectedItemIndex() >= 0)
-            processor.loadFactoryPreset(presets.getSelectedItemIndex());
+        if (presets.getSelectedId() > 0)
+            processor.loadFactoryPreset(presets.getSelectedId() - 1);
     };
     presets.setTooltip("Factory starting points for tracks, instruments and masters");
     addAndMakeVisible(presets);
@@ -357,4 +367,3 @@ void AssEffectAudioProcessorEditor::timerCallback()
     displayedOutput = output >= displayedOutput ? output : displayedOutput * 0.84f;
     repaint();
 }
-

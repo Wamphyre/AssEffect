@@ -3,23 +3,6 @@
 
 namespace
 {
-using Preset = AssEffectAudioProcessor::FactoryPreset;
-
-const std::vector<Preset> factoryPresets
-{
-    { "90s Walkman",       { 0,  7.0f, 38, 24, 21, 18, 10,  -5, 104, 100, -0.5f, 0 } },
-    { "Worn Pressing",     { 1,  4.0f, 58, 66, 38, 47,  8, -10,  92, 100, -1.0f, 0 } },
-    { "4-Track Guitar",    { 2, 13.0f, 62, 48, 24, 21, 35, -18, 116,  88, -2.0f, 0 } },
-    { "Buried Bass",       { 2, 10.0f, 52, 33, 13, 11, 24, -32,  72,  82,  0.5f, 0 } },
-    { "Cellar Drums",      { 3, 15.0f, 56, 42,  8, 17, 53, -25,  64,  76, -3.0f, 0 } },
-    { "Crypt Vocals",      { 3, 12.0f, 71, 55, 18, 25, 44, -36,  48,  83, -2.5f, 0 } },
-    { "Rehearsal Mic",     { 0, 11.0f, 69, 64, 31, 32, 26, -29,  58,  91, -2.0f, 0 } },
-    { "Frozen Sampler",    { 4,  8.0f, 39, 22, 10,  7, 68,  -8, 122,  84, -1.5f, 0 } },
-    { "Necro Master",      { 2,  7.0f, 48, 30, 16, 13, 18, -12,  88,  46, -1.0f, 0 } },
-    { "Raw Master",        { 0,  5.0f, 28, 16, 10,  8,  7,   4, 105,  38, -0.5f, 0 } },
-    { "Dust Dub",          { 1,  6.0f, 78, 83, 62, 61, 17, -28, 128, 100, -2.0f, 0 } }
-};
-
 constexpr std::array<const char*, 12> parameterOrder
 {
     ParameterIDs::machine, ParameterIDs::drive, ParameterIDs::age, ParameterIDs::wear,
@@ -159,17 +142,17 @@ void AssEffectAudioProcessor::setStateInformation(const void* data, int sizeInBy
             parameters.replaceState(juce::ValueTree::fromXml(*xml));
 }
 
-const std::vector<AssEffectAudioProcessor::FactoryPreset>& AssEffectAudioProcessor::getFactoryPresets()
+const std::array<AssEffectAudioProcessor::FactoryPreset, 13>& AssEffectAudioProcessor::getFactoryPresets()
 {
-    return factoryPresets;
+    return assEffectFactoryPresets;
 }
 
 void AssEffectAudioProcessor::loadFactoryPreset(int index)
 {
-    if (!juce::isPositiveAndBelow(index, static_cast<int>(factoryPresets.size())))
+    if (!juce::isPositiveAndBelow(index, static_cast<int>(assEffectFactoryPresets.size())))
         return;
 
-    const auto& preset = factoryPresets[static_cast<std::size_t>(index)];
+    const auto& preset = assEffectFactoryPresets[static_cast<std::size_t>(index)];
     for (std::size_t i = 0; i < parameterOrder.size(); ++i)
     {
         if (auto* parameter = parameters.getParameter(parameterOrder[i]))

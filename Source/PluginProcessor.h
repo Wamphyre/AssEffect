@@ -1,11 +1,10 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include "FactoryPresets.h"
 #include "LoFiEngine.h"
 
-#include <array>
 #include <atomic>
-#include <vector>
 
 namespace ParameterIDs
 {
@@ -26,11 +25,7 @@ inline constexpr auto bypass = "bypass";
 class AssEffectAudioProcessor final : public juce::AudioProcessor
 {
 public:
-    struct FactoryPreset
-    {
-        const char* name;
-        std::array<float, 12> values;
-    };
+    using FactoryPreset = AssEffectFactoryPreset;
 
     AssEffectAudioProcessor();
     ~AssEffectAudioProcessor() override = default;
@@ -62,7 +57,7 @@ public:
     void setStateInformation(const void*, int) override;
 
     juce::AudioProcessorValueTreeState& getValueTreeState() noexcept { return parameters; }
-    static const std::vector<FactoryPreset>& getFactoryPresets();
+    static const std::array<FactoryPreset, 13>& getFactoryPresets();
     void loadFactoryPreset(int index);
     float consumeInputPeak() noexcept { return inputPeak.exchange(0.0f); }
     float consumeOutputPeak() noexcept { return outputPeak.exchange(0.0f); }

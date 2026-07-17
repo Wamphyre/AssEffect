@@ -63,9 +63,25 @@ private:
     std::array<int, maxChannels> delayWritePositions {};
 
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> driveSmoother;
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> ageSmoother;
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> wearSmoother;
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> wowSmoother;
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> noiseSmoother;
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> gritSmoother;
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> widthSmoother;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> mixSmoother;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> outputSmoother;
 
+    float currentLowPassCoefficient = 1.0f;
+    float currentHighPassCoefficient = 1.0f;
+    float currentHeadCoefficient = 1.0f;
+    float targetLowPassCoefficient = 1.0f;
+    float targetHighPassCoefficient = 1.0f;
+    float targetHeadCoefficient = 1.0f;
+    float coefficientSmoothing = 1.0f;
+    float rumbleCoefficient = 0.0f;
+    float crackleDecay = 0.0f;
+    bool parametersInitialised = false;
+
     double sampleRate = 44100.0;
 };
-

@@ -47,6 +47,7 @@ juce_add_plugin(AssEffect
 juce_generate_juce_header(AssEffect)
 
 target_sources(AssEffect PRIVATE
+    Source/FactoryPresets.h
     Source/LoFiEngine.cpp
     Source/LoFiEngine.h
     Source/PluginEditor.cpp
@@ -82,4 +83,28 @@ endif()
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(AssEffect PRIVATE $<$<CONFIG:Release>:-O3>)
+endif()
+
+include(CTest)
+
+if(BUILD_TESTING)
+    juce_add_console_app(AssEffectDSPTests PRODUCT_NAME "Ass Effect DSP Tests")
+    juce_generate_juce_header(AssEffectDSPTests)
+    target_sources(AssEffectDSPTests PRIVATE
+        Tests/DSPTests.cpp
+        Source/FactoryPresets.h
+        Source/LoFiEngine.cpp
+        Source/LoFiEngine.h
+    )
+    target_include_directories(AssEffectDSPTests PRIVATE Source)
+    target_compile_definitions(AssEffectDSPTests PRIVATE
+        JUCE_USE_CURL=0
+        JUCE_WEB_BROWSER=0
+    )
+    target_link_libraries(AssEffectDSPTests PRIVATE
+        juce::juce_dsp
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_warning_flags
+    )
+    add_test(NAME AssEffectDSP COMMAND AssEffectDSPTests)
 endif()

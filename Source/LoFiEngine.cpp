@@ -30,8 +30,17 @@ void LoFiEngine::prepare(const juce::dsp::ProcessSpec& spec)
         line.assign(delaySize, 0.0f);
 
     driveSmoother.reset(sampleRate, 0.025);
+    ageSmoother.reset(sampleRate, 0.040);
+    wearSmoother.reset(sampleRate, 0.040);
+    wowSmoother.reset(sampleRate, 0.040);
+    noiseSmoother.reset(sampleRate, 0.040);
+    gritSmoother.reset(sampleRate, 0.040);
+    widthSmoother.reset(sampleRate, 0.040);
     mixSmoother.reset(sampleRate, 0.025);
     outputSmoother.reset(sampleRate, 0.025);
+    coefficientSmoothing = 1.0f - std::exp(-1.0f / static_cast<float>(sampleRate * 0.020));
+    rumbleCoefficient = onePoleCoefficient(32.0f, sampleRate);
+    crackleDecay = std::exp(-1.0f / static_cast<float>(sampleRate * 0.0014));
     reset();
 }
 
@@ -47,9 +56,7 @@ void LoFiEngine::reset()
         delayWritePositions[static_cast<std::size_t>(channel)] = 0;
     }
 
-    driveSmoother.setCurrentAndTargetValue(1.0f);
-    mixSmoother.setCurrentAndTargetValue(1.0f);
-    outputSmoother.setCurrentAndTargetValue(1.0f);
+    parametersInitialised = false;
 }
 
 float LoFiEngine::nextRandom(ChannelState& state) noexcept
@@ -65,9 +72,6 @@ float LoFiEngine::nextRandom(ChannelState& state) noexcept
 float LoFiEngine::readModulatedDelay(int channel, float input, float depthMs,
                                      float wowAmount, int machine)
 {
-    if (wowAmount < 0.0001f)
-        return input;
-
     auto& state = states[static_cast<std::size_t>(channel)];
     auto& line = delayLines[static_cast<std::size_t>(channel)];
     auto& writePosition = delayWritePositions[static_cast<std::size_t>(channel)];
@@ -83,6 +87,12 @@ float LoFiEngine::readModulatedDelay(int channel, float input, float depthMs,
         state.wowPhase -= twoPi;
     if (state.flutterPhase >= twoPi)
         state.flutterPhase -= twoPi;
+
+    if (wowAmount < 0.0001f)
+    {
+        writePosition = (writePosition + 1) % static_cast<int>(line.size());
+        return input;
+    }
 
     const auto modulation = 0.73f * std::sin(static_cast<float>(state.wowPhase))
                           + 0.27f * std::sin(static_cast<float>(state.flutterPhase));
@@ -167,7 +177,6 @@ float LoFiEngine::processChannel(float input, int channel, const Parameters& p,
 
     if (p.machine == 1)
     {
-        const auto rumbleCoefficient = onePoleCoefficient(32.0f, sampleRate);
         state.rumble += rumbleCoefficient * (white - state.rumble);
         artefact += state.rumble * juce::Decibels::decibelsToGain(-52.0f + noise * 22.0f);
 
@@ -179,7 +188,7 @@ float LoFiEngine::processChannel(float input, int channel, const Parameters& p,
         }
         artefact += state.cracklePolarity * state.crackleEnvelope
                   * juce::Decibels::decibelsToGain(-22.0f + noise * 12.0f);
-        state.crackleEnvelope *= std::exp(-1.0f / static_cast<float>(sampleRate * 0.0014));
+        state.crackleEnvelope *= crackleDecay;
 
         state.noiseLow += 0.085f * (white - state.noiseLow);
         artefact += state.noiseLow * juce::Decibels::decibelsToGain(-61.0f + noise * 29.0f);
@@ -194,12 +203,43 @@ float LoFiEngine::processChannel(float input, int channel, const Parameters& p,
 
     value += artefact;
 
+    // Grit has a continuous analogue stage on every physical machine. Higher
+    // settings progressively add sample-rate and bit-depth damage below.
+    if (p.machine == 0)
+    {
+        const auto shaped = std::tanh(value * (1.0f + grit * 1.8f))
+                          / (1.0f + grit * 0.34f);
+        value += grit * (shaped - value);
+    }
+    else if (p.machine == 1)
+    {
+        const auto stylusCompression = value - grit * 0.20f * value * std::abs(value);
+        const auto shaped = std::tanh(stylusCompression * (1.0f + grit * 0.85f));
+        value += grit * (shaped - value);
+    }
+    else if (p.machine == 2)
+    {
+        const auto shaped = std::tanh((value + 0.035f * grit * value * value)
+                                     * (1.0f + grit * 2.4f))
+                          / (1.0f + grit * 0.42f);
+        value += grit * (shaped - value);
+    }
+
+    // Wear also represents cone fatigue and converter instability in the two
+    // non-media machines, so the control never has a dead machine mode.
+    if (p.machine == 3)
+    {
+        const auto shaped = std::tanh(value * (1.0f + wear * 1.35f))
+                          / (1.0f + wear * 0.28f);
+        value += wear * (shaped - value);
+    }
+
     auto holdFactor = 1;
     auto bitDepth = 16.0f;
     if (p.machine == 4)
     {
-        holdFactor = 1 + static_cast<int>(grit * grit * 38.0f);
-        bitDepth = 15.0f - grit * 11.0f;
+        holdFactor = 1 + static_cast<int>(grit * grit * 38.0f + wear * wear * 4.0f);
+        bitDepth = 15.0f - grit * 11.0f - wear * 1.5f;
     }
     else if (grit > 0.42f)
     {
@@ -246,50 +286,131 @@ void LoFiEngine::process(juce::AudioBuffer<float>& buffer, const Parameters& p)
     if (numChannels <= 0 || numSamples <= 0)
         return;
 
-    driveSmoother.setTargetValue(juce::Decibels::decibelsToGain(p.driveDb));
-    mixSmoother.setTargetValue(juce::jlimit(0.0f, 1.0f, p.mix * 0.01f));
-    outputSmoother.setTargetValue(juce::Decibels::decibelsToGain(p.outputDb));
-
+    auto targetParameters = p;
+    targetParameters.machine = juce::jlimit(0, 4, p.machine);
     const auto age = juce::jlimit(0.0f, 1.0f, p.age * 0.01f);
+    const auto wear = juce::jlimit(0.0f, 1.0f, p.wear * 0.01f);
     const auto toneOctaves = juce::jlimit(-1.8f, 1.8f, p.tone * 0.018f);
     float baseCutoff = 18000.0f;
     float highPass = 24.0f;
+    float wearDarkening = 0.10f;
 
-    switch (p.machine)
+    switch (targetParameters.machine)
     {
-        case 1: baseCutoff = 16600.0f - age * 7600.0f; highPass = 34.0f + age * 30.0f; break;
-        case 2: baseCutoff = 12800.0f - age * 6900.0f; highPass = 48.0f + age * 38.0f; break;
-        case 3: baseCutoff = 6700.0f - age * 2500.0f; highPass = 105.0f + age * 55.0f; break;
-        case 4: baseCutoff = 14700.0f - age * 4300.0f; highPass = 28.0f + age * 18.0f; break;
-        default: baseCutoff = 18400.0f - age * 10500.0f; highPass = 25.0f + age * 28.0f; break;
+        case 1:
+            baseCutoff = 16600.0f - age * 7600.0f;
+            highPass = 34.0f + age * 30.0f;
+            wearDarkening = 0.08f;
+            break;
+        case 2:
+            baseCutoff = 12800.0f - age * 6900.0f;
+            highPass = 48.0f + age * 38.0f;
+            wearDarkening = 0.18f;
+            break;
+        case 3:
+            baseCutoff = 6700.0f - age * 2500.0f;
+            highPass = 105.0f + age * 55.0f;
+            wearDarkening = 0.24f;
+            break;
+        case 4:
+            baseCutoff = 14700.0f - age * 4300.0f;
+            highPass = 28.0f + age * 18.0f;
+            wearDarkening = 0.06f;
+            break;
+        default:
+            baseCutoff = 18400.0f - age * 10500.0f;
+            highPass = 25.0f + age * 28.0f;
+            wearDarkening = 0.13f;
+            break;
     }
 
+    baseCutoff *= 1.0f - wear * wearDarkening;
+    highPass += wear * (targetParameters.machine == 3 ? 28.0f : 9.0f);
     const auto cutoff = juce::jlimit(1800.0f, static_cast<float>(sampleRate * 0.45),
                                      baseCutoff * std::pow(2.0f, toneOctaves));
-    const auto lowPassCoefficient = onePoleCoefficient(cutoff, sampleRate);
-    const auto highPassCoefficient = onePoleCoefficient(highPass, sampleRate);
-    const auto headCoefficient = onePoleCoefficient(p.machine == 2 ? 125.0f : 92.0f, sampleRate);
-    const auto width = juce::jlimit(0.0f, 1.5f, p.width * 0.01f);
+    targetLowPassCoefficient = onePoleCoefficient(cutoff, sampleRate);
+    targetHighPassCoefficient = onePoleCoefficient(highPass, sampleRate);
+    targetHeadCoefficient = onePoleCoefficient(targetParameters.machine == 2 ? 125.0f : 92.0f,
+                                                sampleRate);
+
+    const auto driveTarget = juce::Decibels::decibelsToGain(p.driveDb);
+    const auto ageTarget = juce::jlimit(0.0f, 100.0f, p.age);
+    const auto wearTarget = juce::jlimit(0.0f, 100.0f, p.wear);
+    const auto wowTarget = juce::jlimit(0.0f, 100.0f, p.wow);
+    const auto noiseTarget = juce::jlimit(0.0f, 100.0f, p.noise);
+    const auto gritTarget = juce::jlimit(0.0f, 100.0f, p.grit);
+    const auto widthTarget = juce::jlimit(0.0f, 150.0f, p.width);
+    const auto mixTarget = juce::jlimit(0.0f, 1.0f, p.mix * 0.01f);
+    const auto outputTarget = juce::Decibels::decibelsToGain(p.outputDb);
+
+    if (!parametersInitialised)
+    {
+        driveSmoother.setCurrentAndTargetValue(driveTarget);
+        ageSmoother.setCurrentAndTargetValue(ageTarget);
+        wearSmoother.setCurrentAndTargetValue(wearTarget);
+        wowSmoother.setCurrentAndTargetValue(wowTarget);
+        noiseSmoother.setCurrentAndTargetValue(noiseTarget);
+        gritSmoother.setCurrentAndTargetValue(gritTarget);
+        widthSmoother.setCurrentAndTargetValue(widthTarget);
+        mixSmoother.setCurrentAndTargetValue(mixTarget);
+        outputSmoother.setCurrentAndTargetValue(outputTarget);
+        currentLowPassCoefficient = targetLowPassCoefficient;
+        currentHighPassCoefficient = targetHighPassCoefficient;
+        currentHeadCoefficient = targetHeadCoefficient;
+        parametersInitialised = true;
+    }
+    else
+    {
+        driveSmoother.setTargetValue(driveTarget);
+        ageSmoother.setTargetValue(ageTarget);
+        wearSmoother.setTargetValue(wearTarget);
+        wowSmoother.setTargetValue(wowTarget);
+        noiseSmoother.setTargetValue(noiseTarget);
+        gritSmoother.setTargetValue(gritTarget);
+        widthSmoother.setTargetValue(widthTarget);
+        mixSmoother.setTargetValue(mixTarget);
+        outputSmoother.setTargetValue(outputTarget);
+    }
 
     auto* left = buffer.getWritePointer(0);
     auto* right = numChannels > 1 ? buffer.getWritePointer(1) : nullptr;
 
     for (int sample = 0; sample < numSamples; ++sample)
     {
+        currentLowPassCoefficient += coefficientSmoothing
+                                   * (targetLowPassCoefficient - currentLowPassCoefficient);
+        currentHighPassCoefficient += coefficientSmoothing
+                                    * (targetHighPassCoefficient - currentHighPassCoefficient);
+        currentHeadCoefficient += coefficientSmoothing
+                                * (targetHeadCoefficient - currentHeadCoefficient);
+
+        auto sampleParameters = targetParameters;
+        sampleParameters.age = ageSmoother.getNextValue();
+        sampleParameters.wear = wearSmoother.getNextValue();
+        sampleParameters.wow = wowSmoother.getNextValue();
+        sampleParameters.noise = noiseSmoother.getNextValue();
+        sampleParameters.grit = gritSmoother.getNextValue();
+        sampleParameters.width = widthSmoother.getNextValue();
+
         const auto dryLeft = left[sample];
         const auto dryRight = right != nullptr ? right[sample] : 0.0f;
         const auto drive = driveSmoother.getNextValue();
-        auto wetLeft = processChannel(dryLeft, 0, p, drive, lowPassCoefficient,
-                                      highPassCoefficient, headCoefficient);
+        auto wetLeft = processChannel(dryLeft, 0, sampleParameters, drive,
+                                      currentLowPassCoefficient,
+                                      currentHighPassCoefficient,
+                                      currentHeadCoefficient);
         auto wetRight = right != nullptr
-                      ? processChannel(dryRight, 1, p, drive, lowPassCoefficient,
-                                       highPassCoefficient, headCoefficient)
+                      ? processChannel(dryRight, 1, sampleParameters, drive,
+                                       currentLowPassCoefficient,
+                                       currentHighPassCoefficient,
+                                       currentHeadCoefficient)
                       : 0.0f;
 
         if (right != nullptr)
         {
             const auto mid = 0.5f * (wetLeft + wetRight);
-            const auto side = 0.5f * (wetLeft - wetRight) * width;
+            const auto side = 0.5f * (wetLeft - wetRight)
+                            * juce::jlimit(0.0f, 1.5f, sampleParameters.width * 0.01f);
             wetLeft = mid + side;
             wetRight = mid - side;
         }
@@ -301,4 +422,3 @@ void LoFiEngine::process(juce::AudioBuffer<float>& buffer, const Parameters& p)
             right[sample] = (dryRight + mix * (wetRight - dryRight)) * output;
     }
 }
-
