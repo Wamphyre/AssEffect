@@ -20,10 +20,10 @@
 
 ## Machines
 
-- **90s Cassette**: magnetic compression and saturation with memory, head bump, hiss, high-frequency loss, irregular wow/flutter, and soft-edged dropouts.
+- **90s Cassette**: level- and slew-dependent magnetic compression with memory, head bump, hiss, high-frequency loss, irregular wow/flutter, and soft-edged dropouts.
 - **Worn Vinyl**: the limited bandwidth of a worn record, rumble, broadband surface dust, resonant clicks, and irregular slow wow.
-- **4-Track Demo**: darker, more saturated, and less stable narrow tape designed for guitars and raw demos.
-- **Cellar Speaker**: small-speaker band-pass filtering, asymmetric clipping, and aggressive degradation for vocals, drums, or parallel reamping.
+- **4-Track Demo**: darker magnetic tracking, stronger level-dependent compression, and less stable narrow tape designed for guitars and raw demos.
+- **Cellar Speaker**: cabinet and presence resonances, excursion-dependent cone damping, asymmetric overload, and aggressive degradation for vocals, drums, or parallel reamping.
 - **Bitrot Sampler**: sample-and-hold processing and resolution reduction for cold digital degradation.
 
 Noise and faults are generated directly by the DSP engine. No looping noise samples or external runtime assets are required.
@@ -77,13 +77,15 @@ The mastering presets use less degradation and a lower wet mix. When mastering, 
 
 - Cassette, vinyl, 4-track, and speaker `Grit` stages remain continuous at every setting. Sample-rate reduction and quantisation are exclusive to **Bitrot Sampler**.
 - Non-linear processing is adaptively oversampled to run at approximately 176–192 kHz, reducing folded high-frequency harmonics while avoiding unnecessary work at high host sample rates.
+- Cassette and 4-track magnetisation respond to both signal envelope and slew rate: loud material compresses progressively, while fast transitions encounter additional tracking loss and state-dependent saturation.
+- Cellar Speaker combines low cabinet and mid-presence resonators with a cone model whose bandwidth and compression change with excursion; positive and negative overload use different curves.
 - Wow and flutter combine transport drift, speed-dependent oscillation, and filtered random jitter instead of repeating a perfectly fixed LFO cycle. The delay line uses cubic interpolation to keep pitch movement smooth.
 - Filter, noise-colour, dropout, DC-blocking, and magnetic-memory time constants are derived from the processing sample rate, so a machine keeps the same character at 44.1, 48, 96, or 192 kHz.
 - Vinyl clicks excite short, randomised resonances rather than replaying the same exponential impulse shape.
 
 ## Real-time safety and performance
 
-- A smooth safety ceiling controls internal wet-path overs before downsampling. The **Output** control remains outside this stage, so deliberately adding output gain can still exceed 0 dBFS.
+- A smooth safety ceiling controls internal wet-path overs before downsampling, followed by a narrow reconstruction guard that only catches filter overs above -0.54 dBFS. The **Output** control remains outside both stages, so deliberately adding output gain can still exceed 0 dBFS.
 - Oversampling latency is reported to the host, and the dry path remains aligned through parallel mix and bypass.
 - Delay lines, oversampling buffers, and dry-path compensation are allocated in `prepareToPlay`; the audio thread performs no heap allocations.
 

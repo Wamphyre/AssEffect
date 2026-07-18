@@ -13,6 +13,16 @@ float onePoleCoefficient(float frequency, double sampleRate)
     return 1.0f - std::exp(-twoPi * safeFrequency / static_cast<float>(sampleRate));
 }
 
+float processTptBandPass(float input, float g, float k, float& ic1, float& ic2) noexcept
+{
+    const auto denominator = 1.0f + g * (g + k);
+    const auto v1 = (ic1 + g * (input - ic2)) / denominator;
+    const auto v2 = ic2 + g * v1;
+    ic1 = 2.0f * v1 - ic1;
+    ic2 = 2.0f * v2 - ic2;
+    return v1;
+}
+
 }
 
 void LoFiEngine::prepare(const juce::dsp::ProcessSpec& spec)
@@ -68,8 +78,12 @@ void LoFiEngine::prepare(const juce::dsp::ProcessSpec& spec)
         / static_cast<float>(processingSampleRate * 0.0052));
     dcBlockCoefficient = std::exp(-twoPi * 12.0f
         / static_cast<float>(processingSampleRate));
-    magneticYoungCoefficient = onePoleCoefficient(62.0f, processingSampleRate);
-    magneticOldCoefficient = onePoleCoefficient(28.0f, processingSampleRate);
+    magneticYoungCoefficient = onePoleCoefficient(5200.0f, processingSampleRate);
+    magneticOldCoefficient = onePoleCoefficient(2100.0f, processingSampleRate);
+    magneticEnvelopeAttackCoefficient = onePoleCoefficient(140.0f, processingSampleRate);
+    magneticEnvelopeReleaseCoefficient = onePoleCoefficient(18.0f, processingSampleRate);
+    speakerEnvelopeAttackCoefficient = onePoleCoefficient(180.0f, processingSampleRate);
+    speakerEnvelopeReleaseCoefficient = onePoleCoefficient(14.0f, processingSampleRate);
     transportDriftCoefficient = onePoleCoefficient(0.55f, processingSampleRate);
     flutterJitterCoefficient = onePoleCoefficient(11.0f, processingSampleRate);
 
@@ -276,12 +290,25 @@ float LoFiEngine::applySafetyCeiling(float sample) noexcept
     return std::copysign(limited, sample);
 }
 
+float LoFiEngine::applyReconstructionCeiling(float sample) noexcept
+{
+    constexpr float threshold = 0.94f;
+    constexpr float ceiling = 0.985f;
+    const auto magnitude = std::abs(sample);
+    if (magnitude <= threshold)
+        return sample;
+    const auto limited = threshold + (ceiling - threshold)
+        * std::tanh((magnitude - threshold) / (ceiling - threshold));
+    return std::copysign(limited, sample);
+}
+
 float LoFiEngine::processChannel(float input, int channel, const Parameters& p,
                                  float lowPassCoefficient, float highPassCoefficient,
                                  float headCoefficient, float magneticCoefficient,
                                  float motionDelaySamples, const ArtifactGains& artifactGains,
                                  const SaturationSettings& saturation,
-                                 const DigitalSettings& digital)
+                                 const DigitalSettings& digital,
+                                 const SpeakerSettings& speaker)
 {
     auto& state = states[static_cast<std::size_t>(channel)];
     const auto age = juce::jlimit(0.0f, 1.0f, p.age * 0.01f);
@@ -291,10 +318,46 @@ float LoFiEngine::processChannel(float input, int channel, const Parameters& p,
     state.inputLow += highPassCoefficient * (input - state.inputLow);
     auto value = input - state.inputLow;
 
-    state.hysteresis += magneticCoefficient * (value - state.hysteresis);
+    auto saturationInput = value;
+    if (p.machine == 0 || p.machine == 2)
+    {
+        const auto magnitude = std::abs(value);
+        const auto envelopeCoefficient = magnitude > state.magneticEnvelope
+                                       ? magneticEnvelopeAttackCoefficient
+                                       : magneticEnvelopeReleaseCoefficient;
+        state.magneticEnvelope += envelopeCoefficient
+                                * (magnitude - state.magneticEnvelope);
 
-    const auto memoryAmount = (p.machine == 1 || p.machine == 4) ? 0.025f : (0.08f + 0.13f * age);
-    const auto biased = (value + memoryAmount * state.hysteresis) * saturation.drive
+        const auto normalisedSlew = std::abs(value - state.magneticPreviousInput)
+            * static_cast<float>(processingSampleRate / 48000.0);
+        state.magneticPreviousInput = value;
+        const auto boundedSlew = juce::jmin(8.0f, normalisedSlew);
+        const auto rateLoss = 1.0f / (1.0f + boundedSlew
+            * (0.018f + 0.055f * age + (p.machine == 2 ? 0.015f : 0.0f)));
+        const auto tracking = juce::jmin(1.0f, magneticCoefficient
+            * (p.machine == 2 ? 0.78f : 1.0f) / (1.0f + 0.10f * boundedSlew));
+        const auto excitation = 1.05f + 0.55f * age + 0.22f * wear
+                              + (p.machine == 2 ? 0.18f : 0.0f);
+        const auto magneticTarget = std::tanh(value * rateLoss * excitation
+            + state.hysteresis * (0.10f + 0.12f * age));
+        state.hysteresis += tracking * (magneticTarget - state.hysteresis);
+
+        const auto compression = 1.0f / (1.0f + state.magneticEnvelope
+            * (0.10f + 0.28f * age + (p.machine == 2 ? 0.12f : 0.0f)));
+        const auto memoryAmount = 0.06f + 0.16f * age
+                                + (p.machine == 2 ? 0.05f : 0.0f);
+        saturationInput = value * rateLoss * compression
+                        + memoryAmount * state.hysteresis;
+    }
+    else
+    {
+        state.magneticPreviousInput = value;
+        state.magneticEnvelope += magneticEnvelopeReleaseCoefficient
+                                * (0.0f - state.magneticEnvelope);
+        state.hysteresis += magneticCoefficient * (0.0f - state.hysteresis);
+    }
+
+    const auto biased = saturationInput * saturation.drive
                       + saturation.asymmetry;
     value = (std::tanh(biased) - saturation.biasCorrection) * saturation.normalisation;
 
@@ -376,6 +439,52 @@ float LoFiEngine::processChannel(float input, int channel, const Parameters& p,
 
     value += artefact;
 
+    if (p.machine == 3)
+    {
+        const auto body = processTptBandPass(value, speaker.bodyG, speaker.bodyK,
+                                             state.speakerBodyIc1, state.speakerBodyIc2);
+        const auto presence = processTptBandPass(value, speaker.presenceG, speaker.presenceK,
+                                                 state.speakerPresenceIc1,
+                                                 state.speakerPresenceIc2);
+        const auto magnitude = std::abs(value);
+        const auto envelopeCoefficient = magnitude > state.speakerEnvelope
+                                       ? speakerEnvelopeAttackCoefficient
+                                       : speakerEnvelopeReleaseCoefficient;
+        state.speakerEnvelope += envelopeCoefficient
+                               * (magnitude - state.speakerEnvelope);
+
+        const auto bodyMix = 0.12f + 0.12f * age + 0.18f * wear;
+        const auto presenceMix = 0.07f + 0.12f * grit;
+        auto resonant = 0.72f * value + bodyMix * body + presenceMix * presence;
+        const auto excursion = juce::jlimit(0.0f, 1.0f,
+            state.speakerEnvelope * (0.65f + 0.65f * wear)
+                + 0.12f * std::abs(state.speakerBodyIc2));
+        const auto coneCoefficient = speaker.coneOpenCoefficient
+            + excursion * (speaker.coneClosedCoefficient - speaker.coneOpenCoefficient);
+        state.speakerConeLow += coneCoefficient * (resonant - state.speakerConeLow);
+        resonant = state.speakerConeLow
+                 / (1.0f + state.speakerEnvelope * (0.10f + 0.24f * wear));
+
+        const auto positiveDrive = 1.0f + 4.0f * grit + 1.2f * wear;
+        const auto negativeDrive = 1.0f + 2.7f * grit + 0.8f * wear;
+        auto shaped = std::tanh(resonant * (resonant >= 0.0f ? positiveDrive
+                                                             : negativeDrive));
+        shaped /= 1.0f + 0.30f * grit + 0.10f * wear;
+        const auto nonlinearMix = juce::jlimit(0.0f, 1.0f,
+                                               0.22f + 0.62f * grit + 0.16f * wear);
+        value = resonant + nonlinearMix * (shaped - resonant);
+    }
+    else
+    {
+        const auto decay = 1.0f - speakerEnvelopeReleaseCoefficient;
+        state.speakerBodyIc1 *= decay;
+        state.speakerBodyIc2 *= decay;
+        state.speakerPresenceIc1 *= decay;
+        state.speakerPresenceIc2 *= decay;
+        state.speakerConeLow *= decay;
+        state.speakerEnvelope *= decay;
+    }
+
     // Grit remains a continuous, machine-specific non-linearity on the physical
     // models. Sample-rate and bit-depth damage belong exclusively to Bitrot.
     if (p.machine == 0)
@@ -398,15 +507,6 @@ float LoFiEngine::processChannel(float input, int channel, const Parameters& p,
         value += grit * (shaped - value);
     }
 
-    // Wear also represents cone fatigue and converter instability in the two
-    // non-media machines, so the control never has a dead machine mode.
-    if (p.machine == 3)
-    {
-        const auto shaped = std::tanh(value * (1.0f + wear * 1.35f))
-                          / (1.0f + wear * 0.28f);
-        value += wear * (shaped - value);
-    }
-
     if (digital.holdFactor > 1)
     {
         if (state.holdCounter <= 0)
@@ -425,12 +525,6 @@ float LoFiEngine::processChannel(float input, int channel, const Parameters& p,
 
     if (digital.quantisationLevels > 0.0f)
         value = std::round(value * digital.quantisationLevels) / digital.quantisationLevels;
-
-    if (p.machine == 3)
-    {
-        value = std::tanh(value * (1.0f + grit * 5.5f));
-        value = 0.84f * value + 0.16f * std::abs(value) * (value >= 0.0f ? 1.0f : -0.35f);
-    }
 
     value = readModulatedDelay(channel, value, motionDelaySamples);
 
@@ -573,14 +667,16 @@ void LoFiEngine::process(juce::AudioBuffer<float>& buffer, const Parameters& p, 
                 continue;
             }
 
+            const auto protectedWetLeft = applyReconstructionCeiling(wetLeft[sample]);
             const auto mixedLeft = dryLeft[static_cast<std::size_t>(sample)]
-                + mix * (wetLeft[sample] - dryLeft[static_cast<std::size_t>(sample)]);
+                + mix * (protectedWetLeft - dryLeft[static_cast<std::size_t>(sample)]);
             wetLeft[sample] = mixedLeft * output;
 
             if (wetRight != nullptr)
             {
+                const auto protectedWetRight = applyReconstructionCeiling(wetRight[sample]);
                 const auto mixedRight = dryRight[static_cast<std::size_t>(sample)]
-                    + mix * (wetRight[sample] - dryRight[static_cast<std::size_t>(sample)]);
+                    + mix * (protectedWetRight - dryRight[static_cast<std::size_t>(sample)]);
                 wetRight[sample] = mixedRight * output;
             }
         }
@@ -637,8 +733,8 @@ void LoFiEngine::processOversampledBlock(juce::dsp::AudioBlock<float>& block,
                 saturation.asymmetry = 0.035f + 0.04f * normalisedAge;
                 break;
             case 3:
-                saturation.drive *= 1.65f;
-                saturation.asymmetry = 0.075f;
+                saturation.drive *= 1.35f;
+                saturation.asymmetry = 0.055f;
                 break;
             case 4: saturation.drive *= 0.86f; break;
             default: saturation.asymmetry = 0.018f + 0.025f * normalisedAge; break;
@@ -658,6 +754,27 @@ void LoFiEngine::processOversampledBlock(juce::dsp::AudioBlock<float>& block,
             digital.quantisationLevels = std::exp2(juce::jlimit(3.0f, 16.0f, bitDepth));
         }
 
+        SpeakerSettings speaker;
+        if (sampleParameters.machine == 3)
+        {
+            const auto bodyFrequency = 145.0f + 55.0f * normalisedWear
+                                      - 12.0f * normalisedAge;
+            const auto bodyQ = 1.15f + 1.20f * normalisedWear;
+            const auto presenceFrequency = 1450.0f - 250.0f * normalisedAge
+                                          + 350.0f * normalisedGrit;
+            const auto presenceQ = 0.75f + 0.80f * normalisedGrit;
+            speaker.bodyG = std::tan(0.5f * twoPi * bodyFrequency
+                                     / static_cast<float>(processingSampleRate));
+            speaker.bodyK = 1.0f / bodyQ;
+            speaker.presenceG = std::tan(0.5f * twoPi * presenceFrequency
+                                         / static_cast<float>(processingSampleRate));
+            speaker.presenceK = 1.0f / presenceQ;
+            speaker.coneOpenCoefficient = onePoleCoefficient(5200.0f
+                - 1400.0f * normalisedAge, processingSampleRate);
+            speaker.coneClosedCoefficient = onePoleCoefficient(2300.0f
+                - 650.0f * normalisedAge, processingSampleRate);
+        }
+
         auto wetLeft = processChannel(dryLeft, 0, sampleParameters,
                                       currentLowPassCoefficient,
                                       currentHighPassCoefficient,
@@ -666,7 +783,8 @@ void LoFiEngine::processOversampledBlock(juce::dsp::AudioBlock<float>& block,
                                       motionDelaySamples,
                                       artifactGains,
                                       saturation,
-                                      digital);
+                                      digital,
+                                      speaker);
         auto wetRight = right != nullptr
                       ? processChannel(dryRight, 1, sampleParameters,
                                        currentLowPassCoefficient,
@@ -676,7 +794,8 @@ void LoFiEngine::processOversampledBlock(juce::dsp::AudioBlock<float>& block,
                                        motionDelaySamples,
                                        artifactGains,
                                        saturation,
-                                       digital)
+                                       digital,
+                                       speaker)
                       : 0.0f;
 
         if (right != nullptr)

@@ -53,6 +53,16 @@ private:
         float quantisationLevels = 0.0f;
     };
 
+    struct SpeakerSettings
+    {
+        float bodyG = 0.0f;
+        float bodyK = 1.0f;
+        float presenceG = 0.0f;
+        float presenceK = 1.0f;
+        float coneOpenCoefficient = 1.0f;
+        float coneClosedCoefficient = 1.0f;
+    };
+
     struct ChannelState
     {
         float inputLow = 0.0f;
@@ -61,8 +71,16 @@ private:
         float noiseLow = 0.0f;
         float rumble = 0.0f;
         float hysteresis = 0.0f;
+        float magneticEnvelope = 0.0f;
+        float magneticPreviousInput = 0.0f;
         float dcInput = 0.0f;
         float dcOutput = 0.0f;
+        float speakerBodyIc1 = 0.0f;
+        float speakerBodyIc2 = 0.0f;
+        float speakerPresenceIc1 = 0.0f;
+        float speakerPresenceIc2 = 0.0f;
+        float speakerConeLow = 0.0f;
+        float speakerEnvelope = 0.0f;
         float heldSample = 0.0f;
         float dropoutGain = 1.0f;
         float crackleCurrent = 0.0f;
@@ -83,7 +101,8 @@ private:
                          float headCoefficient, float magneticCoefficient,
                          float motionDelaySamples, const ArtifactGains& artifactGains,
                          const SaturationSettings& saturation,
-                         const DigitalSettings& digital);
+                         const DigitalSettings& digital,
+                         const SpeakerSettings& speaker);
     void processOversampledBlock(juce::dsp::AudioBlock<float>& block,
                                  const Parameters& parameters);
     float readModulatedDelay(int channel, float input, float delaySamples);
@@ -92,6 +111,7 @@ private:
     ArtifactGains calculateArtifactGains(int machine, float noisePercent) const noexcept;
     static float lookupGain(const std::array<float, 101>& table, float percent) noexcept;
     static float applySafetyCeiling(float sample) noexcept;
+    static float applyReconstructionCeiling(float sample) noexcept;
 
     std::array<ChannelState, maxChannels> states;
     std::array<std::vector<float>, maxChannels> delayLines;
@@ -131,6 +151,10 @@ private:
     float dcBlockCoefficient = 0.0f;
     float magneticYoungCoefficient = 0.0f;
     float magneticOldCoefficient = 0.0f;
+    float magneticEnvelopeAttackCoefficient = 0.0f;
+    float magneticEnvelopeReleaseCoefficient = 0.0f;
+    float speakerEnvelopeAttackCoefficient = 0.0f;
+    float speakerEnvelopeReleaseCoefficient = 0.0f;
     float transportDriftCoefficient = 0.0f;
     float flutterJitterCoefficient = 0.0f;
     float transportDrift = 0.0f;
