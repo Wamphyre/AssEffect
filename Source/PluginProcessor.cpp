@@ -82,6 +82,7 @@ void AssEffectAudioProcessor::prepareToPlay(double newSampleRate, int samplesPer
 {
     engine.prepare({ newSampleRate, static_cast<juce::uint32>(samplesPerBlock),
                      static_cast<juce::uint32>(getTotalNumOutputChannels()) });
+    setLatencySamples(engine.getLatencySamples());
 }
 
 void AssEffectAudioProcessor::releaseResources()
@@ -110,6 +111,23 @@ float AssEffectAudioProcessor::findMagnitude(const juce::AudioBuffer<float>& buf
     return magnitude;
 }
 
+LoFiEngine::Parameters AssEffectAudioProcessor::getEngineParameters() const noexcept
+{
+    LoFiEngine::Parameters p;
+    p.machine = juce::roundToInt(parameterCache.machine->load(std::memory_order_relaxed));
+    p.driveDb = parameterCache.drive->load(std::memory_order_relaxed);
+    p.age = parameterCache.age->load(std::memory_order_relaxed);
+    p.wear = parameterCache.wear->load(std::memory_order_relaxed);
+    p.wow = parameterCache.wow->load(std::memory_order_relaxed);
+    p.noise = parameterCache.noise->load(std::memory_order_relaxed);
+    p.grit = parameterCache.grit->load(std::memory_order_relaxed);
+    p.tone = parameterCache.tone->load(std::memory_order_relaxed);
+    p.width = parameterCache.width->load(std::memory_order_relaxed);
+    p.mix = parameterCache.mix->load(std::memory_order_relaxed);
+    p.outputDb = parameterCache.output->load(std::memory_order_relaxed);
+    return p;
+}
+
 void AssEffectAudioProcessor::updatePeak(std::atomic<float>& destination, float value) noexcept
 {
     auto previous = destination.load(std::memory_order_relaxed);
@@ -128,29 +146,17 @@ void AssEffectAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
 
     updatePeak(inputPeak, findMagnitude(buffer));
 
-    if (parameterCache.bypass->load(std::memory_order_relaxed) < 0.5f)
-    {
-        LoFiEngine::Parameters p;
-        p.machine = juce::roundToInt(parameterCache.machine->load(std::memory_order_relaxed));
-        p.driveDb = parameterCache.drive->load(std::memory_order_relaxed);
-        p.age = parameterCache.age->load(std::memory_order_relaxed);
-        p.wear = parameterCache.wear->load(std::memory_order_relaxed);
-        p.wow = parameterCache.wow->load(std::memory_order_relaxed);
-        p.noise = parameterCache.noise->load(std::memory_order_relaxed);
-        p.grit = parameterCache.grit->load(std::memory_order_relaxed);
-        p.tone = parameterCache.tone->load(std::memory_order_relaxed);
-        p.width = parameterCache.width->load(std::memory_order_relaxed);
-        p.mix = parameterCache.mix->load(std::memory_order_relaxed);
-        p.outputDb = parameterCache.output->load(std::memory_order_relaxed);
-        engine.process(buffer, p);
-    }
+    engine.process(buffer, getEngineParameters(),
+                   parameterCache.bypass->load(std::memory_order_relaxed) >= 0.5f);
 
     updatePeak(outputPeak, findMagnitude(buffer));
 }
 
 void AssEffectAudioProcessor::processBlockBypassed(juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
 {
+    juce::ScopedNoDenormals noDenormals;
     updatePeak(inputPeak, findMagnitude(buffer));
+    engine.process(buffer, getEngineParameters(), true);
     updatePeak(outputPeak, findMagnitude(buffer));
 }
 

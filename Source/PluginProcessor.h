@@ -91,6 +91,7 @@ private:
 
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
     static float findMagnitude(const juce::AudioBuffer<float>& buffer);
+    LoFiEngine::Parameters getEngineParameters() const noexcept;
     bool matchesFactoryPreset(int index) const noexcept;
     int findMatchingFactoryPreset() const noexcept;
     void parameterChanged(const juce::String&, float) override;

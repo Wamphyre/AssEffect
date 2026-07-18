@@ -20,8 +20,8 @@
 
 ## Machines
 
-- **90s Cassette**: magnetic compression and saturation with memory, head bump, hiss, high-frequency loss, wow/flutter, and dropouts.
-- **Worn Vinyl**: the limited bandwidth of a worn record, rumble, broadband surface dust, clicks, and slow wow.
+- **90s Cassette**: magnetic compression and saturation with memory, head bump, hiss, high-frequency loss, irregular wow/flutter, and soft-edged dropouts.
+- **Worn Vinyl**: the limited bandwidth of a worn record, rumble, broadband surface dust, resonant clicks, and irregular slow wow.
 - **4-Track Demo**: darker, more saturated, and less stable narrow tape designed for guitars and raw demos.
 - **Cellar Speaker**: small-speaker band-pass filtering, asymmetric clipping, and aggressive degradation for vocals, drums, or parallel reamping.
 - **Bitrot Sampler**: sample-and-hold processing and resolution reduction for cold digital degradation.
@@ -37,7 +37,7 @@ Noise and faults are generated directly by the DSP engine. No looping noise samp
 | Wear | Controls tape dropouts or the density and scratch intensity of vinyl dust and clicks. |
 | Wow / Flutter | Controls slow and fast speed instability. |
 | Noise | Adds tape hiss or controls the level of vinyl surface noise, crackle, and rumble. |
-| Grit | Controls machine-dependent clipping, sample-and-hold, and bit reduction. |
+| Grit | Drives continuous machine-dependent overload on the physical models; on Bitrot it controls sample-and-hold and bit reduction. |
 | Tone | Compensates for or exaggerates the machine's darkness. |
 | Width | Adjusts the stereo image from mono to 150%. |
 | Mix | Controls parallel dry/wet processing. |
@@ -73,12 +73,19 @@ For a subtler result, lower **Wear** first to reduce event density, then lower *
 
 The mastering presets use less degradation and a lower wet mix. When mastering, match the perceived level with **Output** before comparing processed and bypassed audio. For an extreme insert effect, raise **Mix** to 100%.
 
+## Analogue modelling
+
+- Cassette, vinyl, 4-track, and speaker `Grit` stages remain continuous at every setting. Sample-rate reduction and quantisation are exclusive to **Bitrot Sampler**.
+- Non-linear processing is adaptively oversampled to run at approximately 176–192 kHz, reducing folded high-frequency harmonics while avoiding unnecessary work at high host sample rates.
+- Wow and flutter combine transport drift, speed-dependent oscillation, and filtered random jitter instead of repeating a perfectly fixed LFO cycle. The delay line uses cubic interpolation to keep pitch movement smooth.
+- Filter, noise-colour, dropout, DC-blocking, and magnetic-memory time constants are derived from the processing sample rate, so a machine keeps the same character at 44.1, 48, 96, or 192 kHz.
+- Vinyl clicks excite short, randomised resonances rather than replaying the same exponential impulse shape.
+
 ## Real-time safety and performance
 
-- A smooth pre-Output safety ceiling controls internal overs without flattening normal transients. The **Output** control remains outside this stage, so deliberately adding output gain can still exceed 0 dBFS.
-- The audio thread performs no heap allocations.
-- The stereo DSP engine uses approximately 7.4 KiB at 48 kHz and 20.9 KiB at 192 kHz.
-- Every machine remains below 0 dBTP at unity Output in the worst-case all-controls-maximum validation.
+- A smooth safety ceiling controls internal wet-path overs before downsampling. The **Output** control remains outside this stage, so deliberately adding output gain can still exceed 0 dBFS.
+- Oversampling latency is reported to the host, and the dry path remains aligned through parallel mix and bypass.
+- Delay lines, oversampling buffers, and dry-path compensation are allocated in `prepareToPlay`; the audio thread performs no heap allocations.
 
 ## Building and packaging
 

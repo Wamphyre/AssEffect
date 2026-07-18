@@ -17,28 +17,61 @@ float onePoleCoefficient(float frequency, double sampleRate)
 
 void LoFiEngine::prepare(const juce::dsp::ProcessSpec& spec)
 {
-    sampleRate = spec.sampleRate;
-    // The deepest modulation is just over 9 ms. 12 ms leaves safe headroom
-    // without retaining more than four times the memory actually required.
-    const auto delaySize = static_cast<std::size_t>(std::ceil(sampleRate * 0.012)) + 8u;
+    hostSampleRate = juce::jmax(1.0, spec.sampleRate);
+    maximumBlockSize = juce::jmax(1, static_cast<int>(spec.maximumBlockSize));
+
+    // Keep the non-linear stages close to 192 kHz without wasting CPU when the
+    // host is already running at a high sample rate. The IIR half-band filters
+    // add very little latency and their integer-latency mode lets the dry path
+    // remain exactly aligned for parallel processing.
+    const auto factorPower = hostSampleRate <= 50000.0 ? 2u
+                           : hostSampleRate <= 100000.0 ? 1u : 0u;
+    oversamplingFactor = 1 << factorPower;
+    oversampling = std::make_unique<juce::dsp::Oversampling<float>>(
+        maxChannels, factorPower,
+        juce::dsp::Oversampling<float>::FilterType::filterHalfBandPolyphaseIIR,
+        true, true);
+    oversampling->initProcessing(static_cast<std::size_t>(maximumBlockSize));
+    oversamplingLatencySamples = juce::roundToInt(oversampling->getLatencyInSamples());
+
+    processingSampleRate = hostSampleRate * static_cast<double>(oversamplingFactor);
+    noiseOversamplingCompensation = std::sqrt(static_cast<float>(oversamplingFactor));
+
+    // The deepest modulation is just over 9 ms. 12 ms leaves a small safety
+    // margin for interpolation and transport drift.
+    const auto delaySize = static_cast<std::size_t>(std::ceil(processingSampleRate * 0.012)) + 8u;
 
     for (auto& line : delayLines)
         line.assign(delaySize, 0.0f);
+    for (auto& line : dryDelayLines)
+        line.assign(static_cast<std::size_t>(oversamplingLatencySamples + 1), 0.0f);
+    for (auto& scratch : dryScratch)
+        scratch.assign(static_cast<std::size_t>(maximumBlockSize), 0.0f);
 
-    driveSmoother.reset(sampleRate, 0.025);
-    ageSmoother.reset(sampleRate, 0.040);
-    wearSmoother.reset(sampleRate, 0.040);
-    wowSmoother.reset(sampleRate, 0.040);
-    noiseSmoother.reset(sampleRate, 0.040);
-    gritSmoother.reset(sampleRate, 0.040);
-    widthSmoother.reset(sampleRate, 0.040);
-    mixSmoother.reset(sampleRate, 0.025);
-    outputSmoother.reset(sampleRate, 0.025);
-    coefficientSmoothing = 1.0f - std::exp(-1.0f / static_cast<float>(sampleRate * 0.020));
-    rumbleCoefficient = onePoleCoefficient(32.0f, sampleRate);
-    crackleDecay = std::exp(-1.0f / static_cast<float>(sampleRate * 0.0014));
-    magneticYoungCoefficient = onePoleCoefficient(62.0f, sampleRate);
-    magneticOldCoefficient = onePoleCoefficient(28.0f, sampleRate);
+    driveSmoother.reset(processingSampleRate, 0.025);
+    ageSmoother.reset(processingSampleRate, 0.040);
+    wearSmoother.reset(processingSampleRate, 0.040);
+    wowSmoother.reset(processingSampleRate, 0.040);
+    noiseSmoother.reset(processingSampleRate, 0.040);
+    gritSmoother.reset(processingSampleRate, 0.040);
+    widthSmoother.reset(processingSampleRate, 0.040);
+    mixSmoother.reset(hostSampleRate, 0.025);
+    outputSmoother.reset(hostSampleRate, 0.025);
+    coefficientSmoothing = 1.0f - std::exp(-1.0f
+        / static_cast<float>(processingSampleRate * 0.020));
+    rumbleCoefficient = onePoleCoefficient(32.0f, processingSampleRate);
+    hissColourCoefficient = onePoleCoefficient(250.0f, processingSampleRate);
+    surfaceColourCoefficient = onePoleCoefficient(680.0f, processingSampleRate);
+    dropoutAttackCoefficient = 1.0f - std::exp(-1.0f
+        / static_cast<float>(processingSampleRate * 0.00075));
+    dropoutReleaseCoefficient = 1.0f - std::exp(-1.0f
+        / static_cast<float>(processingSampleRate * 0.0052));
+    dcBlockCoefficient = std::exp(-twoPi * 12.0f
+        / static_cast<float>(processingSampleRate));
+    magneticYoungCoefficient = onePoleCoefficient(62.0f, processingSampleRate);
+    magneticOldCoefficient = onePoleCoefficient(28.0f, processingSampleRate);
+    transportDriftCoefficient = onePoleCoefficient(0.55f, processingSampleRate);
+    flutterJitterCoefficient = onePoleCoefficient(11.0f, processingSampleRate);
 
     for (std::size_t index = 0; index < standardHissGains.size(); ++index)
     {
@@ -63,19 +96,24 @@ void LoFiEngine::reset()
         std::fill(delayLines[static_cast<std::size_t>(channel)].begin(),
                   delayLines[static_cast<std::size_t>(channel)].end(), 0.0f);
         delayWritePositions[static_cast<std::size_t>(channel)] = 0;
+        std::fill(dryDelayLines[static_cast<std::size_t>(channel)].begin(),
+                  dryDelayLines[static_cast<std::size_t>(channel)].end(), 0.0f);
+        dryDelayWritePositions[static_cast<std::size_t>(channel)] = 0;
+        std::fill(dryScratch[static_cast<std::size_t>(channel)].begin(),
+                  dryScratch[static_cast<std::size_t>(channel)].end(), 0.0f);
     }
 
+    if (oversampling != nullptr)
+        oversampling->reset();
+
     parametersInitialised = false;
+    motionRandomState = 0xa341316cu;
+    transportDrift = 0.0f;
+    transportDriftTarget = 0.0f;
+    flutterJitter = 0.0f;
+    transportDriftSamples = 0;
     wowPhase = 0.0;
     flutterPhase = 0.0;
-}
-
-std::size_t LoFiEngine::getWorkingMemoryBytes() const noexcept
-{
-    auto bytes = sizeof(*this);
-    for (const auto& line : delayLines)
-        bytes += line.capacity() * sizeof(float);
-    return bytes;
 }
 
 float LoFiEngine::nextRandom(ChannelState& state) noexcept
@@ -85,6 +123,16 @@ float LoFiEngine::nextRandom(ChannelState& state) noexcept
     x ^= x >> 17u;
     x ^= x << 5u;
     state.randomState = x;
+    return static_cast<float>(x) * (1.0f / 4294967295.0f) * 2.0f - 1.0f;
+}
+
+float LoFiEngine::nextMotionRandom() noexcept
+{
+    auto x = motionRandomState;
+    x ^= x << 13u;
+    x ^= x >> 17u;
+    x ^= x << 5u;
+    motionRandomState = x;
     return static_cast<float>(x) * (1.0f / 4294967295.0f) * 2.0f - 1.0f;
 }
 
@@ -121,8 +169,23 @@ float LoFiEngine::calculateMotionDelaySamples(int machine, float wowAmount) noex
 {
     const auto slowRate = machine == 1 ? 0.31 : (machine == 2 ? 0.46 : 0.23);
     const auto fastRate = machine == 1 ? 2.1 : (machine == 2 ? 6.7 : 5.2);
-    wowPhase += twoPi * slowRate / sampleRate;
-    flutterPhase += twoPi * fastRate / sampleRate;
+
+    if (transportDriftSamples <= 0)
+    {
+        transportDriftTarget = nextMotionRandom();
+        const auto intervalSeconds = 0.35f + 1.1f * (nextMotionRandom() * 0.5f + 0.5f);
+        transportDriftSamples = juce::jmax(1, static_cast<int>(processingSampleRate
+                                                               * intervalSeconds));
+    }
+    --transportDriftSamples;
+
+    transportDrift += transportDriftCoefficient * (transportDriftTarget - transportDrift);
+    flutterJitter += flutterJitterCoefficient * (nextMotionRandom() - flutterJitter);
+
+    const auto driftedSlowRate = slowRate * (1.0f + 0.075f * transportDrift);
+    const auto driftedFastRate = fastRate * (1.0f + 0.035f * transportDrift);
+    wowPhase += twoPi * driftedSlowRate / processingSampleRate;
+    flutterPhase += twoPi * driftedFastRate / processingSampleRate;
 
     if (wowPhase >= twoPi)
         wowPhase -= twoPi;
@@ -132,12 +195,19 @@ float LoFiEngine::calculateMotionDelaySamples(int machine, float wowAmount) noex
     if (wowAmount < 0.0001f)
         return 0.0f;
 
-    const auto modulation = 0.73f * std::sin(static_cast<float>(wowPhase))
-                          + 0.27f * std::sin(static_cast<float>(flutterPhase));
+    const auto jitter = juce::jlimit(-1.0f, 1.0f, flutterJitter * 9.0f);
+    const auto slowWeight = machine == 1 ? 0.79f : 0.66f;
+    const auto modulation = slowWeight * std::sin(static_cast<float>(wowPhase))
+                          + (1.0f - slowWeight - 0.07f)
+                              * std::sin(static_cast<float>(flutterPhase))
+                          + 0.045f * transportDrift + 0.025f * jitter;
     const auto depthMs = machine == 1 ? 4.4f : machine == 2 ? 3.8f
                        : machine == 3 ? 1.1f : machine == 4 ? 0.8f : 2.6f;
-    const auto depthSamples = depthMs * 0.001f * static_cast<float>(sampleRate) * wowAmount;
-    return 1.0f + depthSamples * (1.05f + modulation);
+    const auto depthSamples = depthMs * 0.001f
+                            * static_cast<float>(processingSampleRate) * wowAmount;
+    // Three samples of fixed delay keep all four points of the cubic reader in
+    // valid history. At the oversampled rate this is well below audibility.
+    return 3.0f + depthSamples * (1.05f + modulation);
 }
 
 float LoFiEngine::readModulatedDelay(int channel, float input, float delaySamples)
@@ -159,13 +229,36 @@ float LoFiEngine::readModulatedDelay(int channel, float input, float delaySample
     if (readPosition < 0.0f)
         readPosition += static_cast<float>(lineSize);
 
-    const auto indexA = static_cast<int>(readPosition);
-    const auto indexB = indexA + 1 < lineSize ? indexA + 1 : 0;
-    const auto fraction = readPosition - static_cast<float>(indexA);
-    const auto delayed = line[static_cast<std::size_t>(indexA)]
-                       + fraction * (line[static_cast<std::size_t>(indexB)]
-                                   - line[static_cast<std::size_t>(indexA)]);
+    const auto index1 = static_cast<int>(readPosition);
+    const auto index0 = index1 > 0 ? index1 - 1 : lineSize - 1;
+    const auto index2 = index1 + 1 < lineSize ? index1 + 1 : 0;
+    const auto index3 = index2 + 1 < lineSize ? index2 + 1 : 0;
+    const auto fraction = readPosition - static_cast<float>(index1);
+    const auto sample0 = line[static_cast<std::size_t>(index0)];
+    const auto sample1 = line[static_cast<std::size_t>(index1)];
+    const auto sample2 = line[static_cast<std::size_t>(index2)];
+    const auto sample3 = line[static_cast<std::size_t>(index3)];
+    const auto delayed = sample1 + 0.5f * fraction
+        * (sample2 - sample0 + fraction
+            * (2.0f * sample0 - 5.0f * sample1 + 4.0f * sample2 - sample3
+                + fraction * (3.0f * (sample1 - sample2) + sample3 - sample0)));
 
+    if (++writePosition >= lineSize)
+        writePosition = 0;
+    return delayed;
+}
+
+float LoFiEngine::delayDrySample(int channel, float input) noexcept
+{
+    if (oversamplingLatencySamples <= 0)
+        return input;
+
+    auto& line = dryDelayLines[static_cast<std::size_t>(channel)];
+    auto& writePosition = dryDelayWritePositions[static_cast<std::size_t>(channel)];
+    const auto lineSize = static_cast<int>(line.size());
+    const auto readPosition = (writePosition + lineSize - oversamplingLatencySamples) % lineSize;
+    const auto delayed = line[static_cast<std::size_t>(readPosition)];
+    line[static_cast<std::size_t>(writePosition)] = input;
     if (++writePosition >= lineSize)
         writePosition = 0;
     return delayed;
@@ -218,14 +311,16 @@ float LoFiEngine::processChannel(float input, int channel, const Parameters& p,
     {
         const auto eventsPerSecond = 0.015f + wear * wear * (p.machine == 2 ? 1.4f : 0.75f);
         if (state.dropoutSamples <= 0
-            && (nextRandom(state) * 0.5f + 0.5f) < eventsPerSecond / static_cast<float>(sampleRate))
+            && (nextRandom(state) * 0.5f + 0.5f)
+                < eventsPerSecond / static_cast<float>(processingSampleRate))
         {
-            state.dropoutSamples = static_cast<int>(sampleRate * (0.006 + 0.045 * wear
-                                         * (nextRandom(state) * 0.5f + 0.5f)));
+            state.dropoutSamples = static_cast<int>(processingSampleRate
+                * (0.006 + 0.045 * wear * (nextRandom(state) * 0.5f + 0.5f)));
         }
 
         const auto dropoutTarget = state.dropoutSamples > 0 ? 1.0f - (0.18f + 0.68f * wear) : 1.0f;
-        state.dropoutGain += (state.dropoutSamples > 0 ? 0.028f : 0.004f)
+        state.dropoutGain += (state.dropoutSamples > 0 ? dropoutAttackCoefficient
+                                                       : dropoutReleaseCoefficient)
                            * (dropoutTarget - state.dropoutGain);
         value *= state.dropoutGain;
         if (state.dropoutSamples > 0)
@@ -233,7 +328,7 @@ float LoFiEngine::processChannel(float input, int channel, const Parameters& p,
     }
 
     auto artefact = 0.0f;
-    const auto white = nextRandom(state);
+    const auto white = nextRandom(state) * noiseOversamplingCompensation;
 
     if (p.machine == 1)
     {
@@ -241,30 +336,48 @@ float LoFiEngine::processChannel(float input, int channel, const Parameters& p,
         artefact += state.rumble * artifactGains.rumble;
 
         const auto cracklesPerSecond = 0.18f + wear * wear * 24.0f;
-        if ((nextRandom(state) * 0.5f + 0.5f) < cracklesPerSecond / static_cast<float>(sampleRate))
+        if ((nextRandom(state) * 0.5f + 0.5f)
+            < cracklesPerSecond / static_cast<float>(processingSampleRate))
         {
-            state.crackleEnvelope = 0.25f + 0.75f * (nextRandom(state) * 0.5f + 0.5f);
-            state.cracklePolarity = nextRandom(state) >= 0.0f ? 1.0f : -1.0f;
+            const auto brightness = nextRandom(state) * 0.5f + 0.5f;
+            const auto frequency = 1700.0f + 5600.0f * brightness;
+            const auto angularFrequency = twoPi * frequency
+                                        / static_cast<float>(processingSampleRate);
+            const auto decaySeconds = 0.00022f + 0.0013f
+                * (nextRandom(state) * 0.5f + 0.5f);
+            const auto pole = std::exp(-1.0f
+                / (decaySeconds * static_cast<float>(processingSampleRate)));
+            state.crackleCoefficient = 2.0f * pole
+                                      * std::cos(angularFrequency);
+            state.cracklePoleSquared = pole * pole;
+            const auto amplitude = 0.25f + 0.75f
+                * (nextRandom(state) * 0.5f + 0.5f);
+            state.crackleCurrent += (nextRandom(state) >= 0.0f ? 1.0f : -1.0f)
+                                  * amplitude * std::sin(angularFrequency)
+                                  * noiseOversamplingCompensation;
         }
-        artefact += state.cracklePolarity * state.crackleEnvelope * artifactGains.crackle;
-        state.crackleEnvelope *= crackleDecay;
+        artefact += state.crackleCurrent * artifactGains.crackle;
+        const auto nextCrackle = state.crackleCoefficient * state.crackleCurrent
+                               - state.cracklePoleSquared * state.cracklePrevious;
+        state.cracklePrevious = state.crackleCurrent;
+        state.crackleCurrent = nextCrackle;
 
-        state.noiseLow += 0.085f * (white - state.noiseLow);
+        state.noiseLow += surfaceColourCoefficient * (white - state.noiseLow);
         const auto dustScratch = (white - state.noiseLow) * (0.25f + 0.75f * wear);
         const auto surfaceTexture = 0.72f * state.noiseLow + 0.28f * dustScratch;
         artefact += surfaceTexture * artifactGains.surface;
     }
     else
     {
-        state.noiseLow += 0.032f * (white - state.noiseLow);
+        state.noiseLow += hissColourCoefficient * (white - state.noiseLow);
         const auto hiss = white - state.noiseLow * 0.78f;
         artefact += hiss * artifactGains.hiss;
     }
 
     value += artefact;
 
-    // Grit has a continuous analogue stage on every physical machine. Higher
-    // settings progressively add sample-rate and bit-depth damage below.
+    // Grit remains a continuous, machine-specific non-linearity on the physical
+    // models. Sample-rate and bit-depth damage belong exclusively to Bitrot.
     if (p.machine == 0)
     {
         const auto shaped = std::tanh(value * (1.0f + grit * 1.8f))
@@ -294,13 +407,21 @@ float LoFiEngine::processChannel(float input, int channel, const Parameters& p,
         value += wear * (shaped - value);
     }
 
-    if (state.holdCounter <= 0)
+    if (digital.holdFactor > 1)
+    {
+        if (state.holdCounter <= 0)
+        {
+            state.heldSample = value;
+            state.holdCounter = digital.holdFactor;
+        }
+        --state.holdCounter;
+        value = state.heldSample;
+    }
+    else
     {
         state.heldSample = value;
-        state.holdCounter = digital.holdFactor;
+        state.holdCounter = 0;
     }
-    --state.holdCounter;
-    value = state.heldSample;
 
     if (digital.quantisationLevels > 0.0f)
         value = std::round(value * digital.quantisationLevels) / digital.quantisationLevels;
@@ -313,17 +434,17 @@ float LoFiEngine::processChannel(float input, int channel, const Parameters& p,
 
     value = readModulatedDelay(channel, value, motionDelaySamples);
 
-    const auto dcBlocked = value - state.dcInput + 0.995f * state.dcOutput;
+    const auto dcBlocked = value - state.dcInput + dcBlockCoefficient * state.dcOutput;
     state.dcInput = value;
     state.dcOutput = dcBlocked;
     return dcBlocked;
 }
 
-void LoFiEngine::process(juce::AudioBuffer<float>& buffer, const Parameters& p)
+void LoFiEngine::process(juce::AudioBuffer<float>& buffer, const Parameters& p, bool bypassed)
 {
     const auto numChannels = juce::jmin(maxChannels, buffer.getNumChannels());
     const auto numSamples = buffer.getNumSamples();
-    if (numChannels <= 0 || numSamples <= 0)
+    if (numChannels <= 0 || numSamples <= 0 || oversampling == nullptr)
         return;
 
     auto targetParameters = p;
@@ -366,12 +487,13 @@ void LoFiEngine::process(juce::AudioBuffer<float>& buffer, const Parameters& p)
 
     baseCutoff *= 1.0f - wear * wearDarkening;
     highPass += wear * (targetParameters.machine == 3 ? 28.0f : 9.0f);
-    const auto cutoff = juce::jlimit(1800.0f, static_cast<float>(sampleRate * 0.45),
+    const auto cutoff = juce::jlimit(1800.0f,
+                                     static_cast<float>(processingSampleRate * 0.45),
                                      baseCutoff * std::pow(2.0f, toneOctaves));
-    targetLowPassCoefficient = onePoleCoefficient(cutoff, sampleRate);
-    targetHighPassCoefficient = onePoleCoefficient(highPass, sampleRate);
+    targetLowPassCoefficient = onePoleCoefficient(cutoff, processingSampleRate);
+    targetHighPassCoefficient = onePoleCoefficient(highPass, processingSampleRate);
     targetHeadCoefficient = onePoleCoefficient(targetParameters.machine == 2 ? 125.0f : 92.0f,
-                                                sampleRate);
+                                                processingSampleRate);
 
     const auto driveTarget = juce::Decibels::decibelsToGain(p.driveDb);
     const auto ageTarget = juce::jlimit(0.0f, 100.0f, p.age);
@@ -412,8 +534,66 @@ void LoFiEngine::process(juce::AudioBuffer<float>& buffer, const Parameters& p)
         outputSmoother.setTargetValue(outputTarget);
     }
 
-    auto* left = buffer.getWritePointer(0);
-    auto* right = numChannels > 1 ? buffer.getWritePointer(1) : nullptr;
+    auto fullBlock = juce::dsp::AudioBlock<float>(buffer)
+        .getSubsetChannelBlock(0, static_cast<std::size_t>(numChannels));
+
+    for (int blockStart = 0; blockStart < numSamples; blockStart += maximumBlockSize)
+    {
+        const auto blockSamples = juce::jmin(maximumBlockSize, numSamples - blockStart);
+        auto baseBlock = fullBlock.getSubBlock(static_cast<std::size_t>(blockStart),
+                                               static_cast<std::size_t>(blockSamples));
+
+        for (int channel = 0; channel < numChannels; ++channel)
+        {
+            const auto* input = baseBlock.getChannelPointer(static_cast<std::size_t>(channel));
+            auto& scratch = dryScratch[static_cast<std::size_t>(channel)];
+            for (int sample = 0; sample < blockSamples; ++sample)
+                scratch[static_cast<std::size_t>(sample)] = delayDrySample(channel, input[sample]);
+        }
+
+        auto oversampledBlock = oversampling->processSamplesUp(
+            juce::dsp::AudioBlock<const float>(baseBlock));
+        processOversampledBlock(oversampledBlock, targetParameters);
+        oversampling->processSamplesDown(baseBlock);
+
+        auto* wetLeft = baseBlock.getChannelPointer(0);
+        auto* wetRight = numChannels > 1 ? baseBlock.getChannelPointer(1) : nullptr;
+        const auto& dryLeft = dryScratch[0];
+        const auto& dryRight = dryScratch[1];
+
+        for (int sample = 0; sample < blockSamples; ++sample)
+        {
+            const auto mix = mixSmoother.getNextValue();
+            const auto output = outputSmoother.getNextValue();
+            if (bypassed)
+            {
+                wetLeft[sample] = dryLeft[static_cast<std::size_t>(sample)];
+                if (wetRight != nullptr)
+                    wetRight[sample] = dryRight[static_cast<std::size_t>(sample)];
+                continue;
+            }
+
+            const auto mixedLeft = dryLeft[static_cast<std::size_t>(sample)]
+                + mix * (wetLeft[sample] - dryLeft[static_cast<std::size_t>(sample)]);
+            wetLeft[sample] = mixedLeft * output;
+
+            if (wetRight != nullptr)
+            {
+                const auto mixedRight = dryRight[static_cast<std::size_t>(sample)]
+                    + mix * (wetRight[sample] - dryRight[static_cast<std::size_t>(sample)]);
+                wetRight[sample] = mixedRight * output;
+            }
+        }
+    }
+}
+
+void LoFiEngine::processOversampledBlock(juce::dsp::AudioBlock<float>& block,
+                                         const Parameters& targetParameters)
+{
+    const auto numChannels = static_cast<int>(block.getNumChannels());
+    const auto numSamples = static_cast<int>(block.getNumSamples());
+    auto* left = block.getChannelPointer(0);
+    auto* right = numChannels > 1 ? block.getChannelPointer(1) : nullptr;
 
     for (int sample = 0; sample < numSamples; ++sample)
     {
@@ -468,22 +648,15 @@ void LoFiEngine::process(juce::AudioBuffer<float>& buffer, const Parameters& p)
             / juce::jmax(1.0f, std::tanh(saturation.drive) * 1.12f);
 
         DigitalSettings digital;
-        auto bitDepth = 16.0f;
         if (sampleParameters.machine == 4)
         {
-            digital.holdFactor = 1 + static_cast<int>(normalisedGrit * normalisedGrit * 38.0f
-                                                     + normalisedWear * normalisedWear * 4.0f);
-            bitDepth = 15.0f - normalisedGrit * 11.0f - normalisedWear * 1.5f;
-        }
-        else if (normalisedGrit > 0.42f)
-        {
-            digital.holdFactor = 1 + static_cast<int>((normalisedGrit - 0.42f)
-                * (sampleParameters.machine == 3 ? 14.0f : 6.0f));
-            bitDepth = 16.0f - (normalisedGrit - 0.42f)
-                                 * (sampleParameters.machine == 3 ? 13.0f : 8.0f);
-        }
-        if (bitDepth < 15.9f)
+            const auto baseHoldFactor = 1 + static_cast<int>(normalisedGrit * normalisedGrit
+                * 38.0f + normalisedWear * normalisedWear * 4.0f);
+            digital.holdFactor = 1 + (baseHoldFactor - 1) * oversamplingFactor;
+            const auto bitDepth = 15.0f - normalisedGrit * 11.0f
+                                         - normalisedWear * 1.5f;
             digital.quantisationLevels = std::exp2(juce::jlimit(3.0f, 16.0f, bitDepth));
+        }
 
         auto wetLeft = processChannel(dryLeft, 0, sampleParameters,
                                       currentLowPassCoefficient,
@@ -515,16 +688,8 @@ void LoFiEngine::process(juce::AudioBuffer<float>& buffer, const Parameters& p)
             wetRight = mid - side;
         }
 
-        const auto mix = mixSmoother.getNextValue();
-        const auto output = outputSmoother.getNextValue();
-        const auto mixedLeft = dryLeft + mix * (wetLeft - dryLeft);
-        const auto protectedLeft = mixedLeft + mix * (applySafetyCeiling(mixedLeft) - mixedLeft);
-        left[sample] = protectedLeft * output;
+        left[sample] = applySafetyCeiling(wetLeft);
         if (right != nullptr)
-        {
-            const auto mixedRight = dryRight + mix * (wetRight - dryRight);
-            const auto protectedRight = mixedRight + mix * (applySafetyCeiling(mixedRight) - mixedRight);
-            right[sample] = protectedRight * output;
-        }
+            right[sample] = applySafetyCeiling(wetRight);
     }
 }

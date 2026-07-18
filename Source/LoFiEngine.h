@@ -3,6 +3,7 @@
 #include <JuceHeader.h>
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 class LoFiEngine
@@ -25,8 +26,9 @@ public:
 
     void prepare(const juce::dsp::ProcessSpec& spec);
     void reset();
-    void process(juce::AudioBuffer<float>& buffer, const Parameters& parameters);
-    std::size_t getWorkingMemoryBytes() const noexcept;
+    void process(juce::AudioBuffer<float>& buffer, const Parameters& parameters,
+                 bool bypassed = false);
+    int getLatencySamples() const noexcept { return oversamplingLatencySamples; }
 
 private:
     struct ArtifactGains
@@ -63,8 +65,10 @@ private:
         float dcOutput = 0.0f;
         float heldSample = 0.0f;
         float dropoutGain = 1.0f;
-        float crackleEnvelope = 0.0f;
-        float cracklePolarity = 1.0f;
+        float crackleCurrent = 0.0f;
+        float cracklePrevious = 0.0f;
+        float crackleCoefficient = 0.0f;
+        float cracklePoleSquared = 0.0f;
         int holdCounter = 0;
         int dropoutSamples = 0;
         std::uint32_t randomState = 0x6d2b79f5u;
@@ -73,14 +77,18 @@ private:
     static constexpr int maxChannels = 2;
 
     float nextRandom(ChannelState& state) noexcept;
+    float nextMotionRandom() noexcept;
     float processChannel(float input, int channel, const Parameters& p,
                          float lowPassCoefficient, float highPassCoefficient,
                          float headCoefficient, float magneticCoefficient,
                          float motionDelaySamples, const ArtifactGains& artifactGains,
                          const SaturationSettings& saturation,
                          const DigitalSettings& digital);
+    void processOversampledBlock(juce::dsp::AudioBlock<float>& block,
+                                 const Parameters& parameters);
     float readModulatedDelay(int channel, float input, float delaySamples);
     float calculateMotionDelaySamples(int machine, float wowAmount) noexcept;
+    float delayDrySample(int channel, float input) noexcept;
     ArtifactGains calculateArtifactGains(int machine, float noisePercent) const noexcept;
     static float lookupGain(const std::array<float, 101>& table, float percent) noexcept;
     static float applySafetyCeiling(float sample) noexcept;
@@ -88,6 +96,9 @@ private:
     std::array<ChannelState, maxChannels> states;
     std::array<std::vector<float>, maxChannels> delayLines;
     std::array<int, maxChannels> delayWritePositions {};
+    std::array<std::vector<float>, maxChannels> dryDelayLines;
+    std::array<int, maxChannels> dryDelayWritePositions {};
+    std::array<std::vector<float>, maxChannels> dryScratch;
     std::array<float, 101> standardHissGains {};
     std::array<float, 101> fourTrackHissGains {};
     std::array<float, 101> cellarHissGains {};
@@ -113,12 +124,29 @@ private:
     float targetHeadCoefficient = 1.0f;
     float coefficientSmoothing = 1.0f;
     float rumbleCoefficient = 0.0f;
-    float crackleDecay = 0.0f;
+    float hissColourCoefficient = 0.0f;
+    float surfaceColourCoefficient = 0.0f;
+    float dropoutAttackCoefficient = 0.0f;
+    float dropoutReleaseCoefficient = 0.0f;
+    float dcBlockCoefficient = 0.0f;
     float magneticYoungCoefficient = 0.0f;
     float magneticOldCoefficient = 0.0f;
+    float transportDriftCoefficient = 0.0f;
+    float flutterJitterCoefficient = 0.0f;
+    float transportDrift = 0.0f;
+    float transportDriftTarget = 0.0f;
+    float flutterJitter = 0.0f;
+    int transportDriftSamples = 0;
+    std::uint32_t motionRandomState = 0xa341316cu;
     double wowPhase = 0.0;
     double flutterPhase = 0.0;
     bool parametersInitialised = false;
 
-    double sampleRate = 44100.0;
+    std::unique_ptr<juce::dsp::Oversampling<float>> oversampling;
+    int maximumBlockSize = 1;
+    int oversamplingFactor = 1;
+    int oversamplingLatencySamples = 0;
+    float noiseOversamplingCompensation = 1.0f;
+    double hostSampleRate = 44100.0;
+    double processingSampleRate = 44100.0;
 };
